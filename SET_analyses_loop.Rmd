@@ -1,0 +1,3112 @@
+---
+title: "SET"
+author: "Maria Eckstein"
+date: "January 3, 2015"
+output:
+  pdf_document:
+    fig_caption: yes
+    number_sections: yes
+    toc: yes
+  html_document:
+    fig_caption: yes
+    number_sections: yes
+    toc: yes
+---
+
+```{r, echo = F, results = F, warning = F, message = F}
+#################
+### ACTIONS!! ###
+#################
+
+### Set directories
+setwd("C:/Users/maria/documents/MEGAsync/Berkeley/R scripts/sequentialset")
+file_dir = "C:/Users/maria/documents/MEGAsync/Berkeley/R scripts/sequentialset/subj_files/databoth/raw_data"
+figure_dir = "C:/Users/Maria/Dropbox/Maria_Ariel_Silvia_SETpaper/Figures"
+# file_dir = "C:/Users/maria/MEGAsync/Berkeley/R scripts/sequentialset/subj_files_nb"
+
+### Load packages
+library("plyr"); library("zoo"); library("gridExtra"); library("reshape"); library("simpleboot"); library("nlme"); library("ggplot2"); library("moments"); library("lme4"); library("lmerTest"); source("FUNCTIONS/mean.cl.boot.R"); library("mixtools")
+
+preprocess_data = F                              # If TRUE, reads in raw data (.csv format), preprocesses it (shifting fixation to previous trial [2013 data], removing outliers and interpolating pupil data), and creates an all_files data file that contains the raw data from all subjects
+run_regression_models = F                        # If TRUE, will calculate all the hierrachical regressio models, which takes FOREVER
+ggsave_figures = F
+nb = T                                           # nb: new baseline
+data_year = "both"                                     # Which data set? 2013 or 2015 or "both" or 2016?
+
+item_presentation_start = c(0, 1.5, 3, 4.5, 6)
+item_presentation_end   = c(1, 2.5, 4, 5.5, 6.5)
+response_prompt_time    = 6
+exclude_poor_subjects   = T      # If FALSE, only data is excluded that would otherwise lead to problems with data analysis (acc < 20% in any span)
+sum = 0
+for (i in 0:14) {
+  s = choose(20,i) * 0.5^20
+  sum = sum + s
+}
+sum    # sum = 0.9423409 for i = 13 & sum = 0.9793053 for i = 14 => cutoff should be 13
+source("FUNCTIONS/dprime.R")
+dprime_cutoff = dprime(hits = 0.6, false.alarms = 0.4)
+overall_cutoff = 14/20           # How many trials must a subject get right per span, combining hits and correct rejections, in order to not be excluded? In other words, participants who answer less trials correctly will be excluded
+use_dprime = T          # What should be used a a performance cutoff? d-prime ("dprime_cutoff") -> set to "T"; overall performance ("overall_cutoff") -> set to "F"?
+
+### Get plot colours
+span_colors = colorRampPalette(c("blue", "yellow"))
+oddball_colors = c("dark grey", "orange", "red")    #colorRampPalette(c("red", "yellow"))
+bw_colors = c("#999999", "#000000")
+set_colors = c("dark grey", "dark orange")    #colorRampPalette(c("red", "yellow"))
+oddball_window_colors = colorRampPalette("red")
+group_colors = c("red", "grey", "blue")
+
+### Set plot dimensions
+one_by_two = data.frame(width = 3.5, height = 2.5)
+one_by_one = data.frame(width = 2, height = 2.3)
+
+### Prepare response windows etc.
+x = 0; y = 1
+tile_x_center = (item_presentation_start + item_presentation_end) / 2
+tile_y_center = rep(0, length(item_presentation_start))
+tile_width    = item_presentation_end - item_presentation_start
+tile_height   = rep(Inf, length(item_presentation_start))
+tile_data     = data.frame(x = tile_x_center, y = tile_y_center, width = tile_width, height = tile_height)
+tile_data$labels = c("It1", "It2", "It3", "It4", "")
+```
+
+# Data analysis
+
+## Data preprocessing
+
+```{r, echo = F, results = F, warning = F, message = F}
+##########################
+### Read in data files ###
+##########################
+
+if (preprocess_data) {
+  
+  ### Find subject data files and create folder to put the preprocessed ones
+  filenames = list.files(file_dir, pattern = "*.csv")
+  
+  ### Set up the loop over all files
+  for (filename in filenames) {
+    subj_file = read.csv(file = file.path(file_dir, filename), header = T, na.strings = c("", "NA", "-1"))
+    filename = paste("latSET", subj_file$Subject[1], ".csv", sep = "")
+
+    ### Remove training trials
+    subj_file = subset(subj_file, TrainorExp == "Exp")
+    subj_file$Category = factor(subj_file$Category)
+    subj_file$SETornoSET = factor(subj_file$SETornoSET, levels = c("SET", "noSET"))
+
+    ### Keep only necessary columns
+    keep_columns = c("Subject", "ID", "TimestampSec", "TimestampMicrosec", "DiameterPupilLeftEye", "ValidityLeftEye", "DiameterPupilRightEye", "ValidityRightEye", "TrialId", "CRESP", "RESP", "ACC", "RT", "Category", "SETornoSET", "TrainorExp", "Position_false_shape", "CurrentObject")
+    
+    subj_file = subset(subj_file[,keep_columns])
+    
+    gg_test_raw_subj_file = ggplot(subj_file[1:1000,], aes(ID, DiameterPupilLeftEye, color = Category)) +
+      stat_summary(fun.y = mean, geom = "point") +
+      scale_color_manual(values = span_colors(4)) +
+      facet_grid( ~ SETornoSET)
+    
+    #########################################
+    ### Filter and interpolate pupil data ###
+    #########################################
+    
+    ### Create subj_file and filter stats
+    source("FUNCTIONS/filter_and_interpolate_raw_pupil_data.R")
+    subj_file_and_filterstats = filter_and_interpolate_raw_pupil_data(file = subj_file,
+                                                                      output_dir = "C:/Users/maria/MEGAsync/Berkeley/R scripts/sequentialset/subj_files_nb",
+                                                                      se = 5,
+                                                                      numPoints = 80,
+                                                                      max.interp = 12,
+                                                                      min.percent.of.valid.data = 30)
+    subj_file = orig_subj_file = subj_file_and_filterstats[[1]]
+    filter_stats = subj_file_and_filterstats[[2]]
+    
+    gg_test_interp_subj_file = ggplot(subj_file[1:1000,], aes(ID, filtered_av_pupil, color = Category)) +
+      stat_summary(fun.y = mean, geom = "point") +
+      scale_color_manual(values = span_colors(4)) +
+      facet_grid(~ SETornoSET)
+    
+
+    #############################################################
+    ### Exclude trials with less than 50% of valid pupil data ###
+    #############################################################
+    
+    # source("FUNCTIONS/exclude_trials_with_too_much_invalid_data.R")
+    # subj_file_and_remove_stats = exclude_trials_with_too_much_invalid_data(file = subj_file, trial_threshold = 50)
+    # subj_file = subj_file_and_remove_stats[[1]]
+    # remove_stats = subj_file_and_remove_stats[[2]]
+    
+    ########################################
+    ### Bin the data into pieces of 50ms ###
+    ########################################
+    
+    ### Add fixations to previous trial (only necessary for data collected with OLD SET version!!! [all 2014 data & subject 301 of the 2015 data])
+    source("FUNCTIONS/add_fixations_to_previous_trial.R")
+    if (subj_file$Subject[1] %in% c(seq(3, 41), 301)) {
+      subj_file = add_fixations_to_previous_trial(subj_file)
+    }
+    
+    ### Downsample to 20 Hertz and smooth
+    source("FUNCTIONS/create_rolling_time_bins.R")
+    subj_file = create_rolling_time_bins(data = subj_file, time_bin = 0.05, smooth_times = 3, ddply_columns = c("Subject", "TrialId", "CRESP", "RESP", "ACC", "RT", "Category", "SETornoSET", "Position_false_shape", "bin_time"))
+    subj_file$bin_time = round(subj_file$bin_time, 2)
+    
+    gg_test_roll_subj_file = ggplot(subset(subj_file, TrialId < 10), aes(bin_time, roll_pupil, color = Category)) +
+      stat_summary(fun.y = mean, geom = "point") +
+      stat_summary(fun.y = mean, geom = "line") +
+      scale_color_manual(values = span_colors(4))
+    
+    ### Make each trial start at time 0
+    source("FUNCTIONS/start_each_trial_at_time_0.R")
+    subj_file = start_each_trial_at_time_0(subj_file, m_trial_duration = 10)
+    
+    gg_test_start0_subj_file = ggplot(subj_file, aes(bin_time, roll_pupil, color = Category)) +
+      # geom_point() +
+      # geom_line() +
+      stat_summary(fun.y = 'mean', geom = "point") +
+      stat_summary(fun.y = mean, geom = "line") +
+      scale_color_manual(values = span_colors(4)) +
+      facet_grid(~ SETornoSET)
+    
+    ### Calculate pupil dilation relative to baseline period
+    source("FUNCTIONS/calculate_relative_pupil_dilation.R")
+    subj_file = calculate_relative_pupil_dilation(subj_file, baseline_window_length = 50, bin_duration = 50, baseline_prev_trial = F)
+    subj_file$rel_pupil = as.numeric(as.character(subj_file$rel_pupil))
+    
+    gg_test_rel_subj_file = ggplot(subset(subj_file, bin_time < 2), aes(bin_time, rel_pupil, color = Category)) +
+      geom_point() +
+      # stat_summary(fun.y = mean, geom = "point") +
+      scale_color_manual(values = span_colors(4)) +
+      scale_fill_manual(values = span_colors(4), guide = FALSE) +
+      facet_grid(~ SETornoSET)
+    
+    ###########################
+    ### Save each subj_file ###
+    ###########################
+    write.csv(subj_file, paste("subj_files_nb/preprocessed_", filename, sep = ""), row.names = F)
+  }
+  
+  #####################################################
+  ### Put all subject files into a single dataframe ###
+  #####################################################
+  
+  ### Find the files
+  filenames = list.files("subj_files_nb/bs200", pattern = "*.csv")
+  
+  ### Prepare allfiles dataframe
+  allfiles = read.csv(file = file.path("subj_files_nb/bs200", filenames[1]), header = T, nrow = 1)
+  
+  ### Read in each data frame and attach it to allfiles
+  for (filename in filenames) {
+    subj_file = read.csv(file = file.path("subj_files_nb/bs200", filename), header = T)
+    allfiles = rbind(allfiles, subj_file)
+  }
+  
+  ### Fix allfiles and save as csv
+  allfiles = allfiles[-1,]
+  keep_columns = c("Subject", "TrialId", "ACC", "RT", "Category", "SETornoSET", "Position_false_shape", "bin_time", "bin_pupil", "roll_pupil", "rel_pupil")
+  allfiles = subset(allfiles, bin_time <= 9, select = keep_columns)
+  colnames(allfiles) = c("Subject", "TrialId", "ACC", "RT", "span", "set", "oddball", "bin_time", "bin_pupil", "roll_pupil", "rel_pupil")
+  allfiles$oddball[is.na(allfiles$oddball)] = "SET"
+  allfiles$oddball = factor(allfiles$oddball, levels = c("SET", "3", "4"), labels = c("SET", "noSET-3", "noSET-4"))
+  allfiles$bin_time = round(allfiles$bin_time, 2)
+  
+  ## Don't delete fast trials (particiaptns can prepare response ahead)
+  # Add block column
+  allfiles$block[allfiles$TrialId <= 41] = 1
+  allfiles$block[allfiles$TrialId >= 44] = 2
+  
+  write.csv(allfiles, paste("preprocessed_allfiles_nb_", data_year, ".csv", sep = ""), row.names = F)
+}
+
+## Read in the ready allfiles dataframe from disk
+if (nb) {
+  allfiles_orig = read.csv(paste("preprocessed_allfiles_nb_both.csv", sep = ""), header = T)
+  allfiles_orig$oddball = factor(allfiles_orig$oddball, levels = c("SET", "noSET-3", "noSET-4"))
+  allfiles_orig$bigspan = as.character(allfiles_orig$span)
+  allfiles_orig$bigspan[allfiles_orig$bigspan %in% c("1span", "2span", "3span")] = "123span"
+  allfiles_orig$bigspan = factor(allfiles_orig$bigspan)
+} else {
+  allfiles_2013 = read.csv(paste("preprocessed_allfiles_2013.csv", sep = ""), header = T)
+  allfiles_2015 = read.csv(paste("preprocessed_allfiles_2015.csv", sep = ""), header = T)
+  allfiles_orig = rbind(allfiles_2013, allfiles_2015)
+  # allfiles$oddball = factor(allfiles$oddball, levels = c("SET", "noSET-3", "noSET-4"))
+}
+
+gg_test_allfiles_bin = ggplot(allfiles_orig, aes(bin_time, bin_pupil, color = span, fill = span)) +
+  theme_bw() +
+  stat_summary(fun.y = mean, geom = "point") +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "smooth", alpha = .2) +
+  scale_color_manual(values = span_colors(4)) +
+  scale_fill_manual(values = span_colors(4)) +
+  facet_grid(~ oddball)
+
+gg_test_allfiles_rol = ggplot(allfiles_orig, aes(bin_time, roll_pupil, color = span, fill = span)) +
+  theme_bw() +
+  stat_summary(fun.y = mean, geom = "point") +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "smooth", alpha = .2) +
+  scale_color_manual(values = span_colors(4)) +
+  scale_fill_manual(values = span_colors(4)) +
+  facet_grid(~ oddball)
+
+gg_test_allfiles_rel = ggplot(allfiles_orig, aes(bin_time, rel_pupil, color = span, fill = span)) +
+  theme_bw() +
+  stat_summary(fun.y = mean, geom = "point") +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "smooth", alpha = .2) +
+  scale_color_manual(values = span_colors(4)) +
+  scale_fill_manual(values = span_colors(4)) +
+  facet_grid(~ oddball)
+```
+
+## Exclude subjects with insufficient performance
+
+```{r, echo = F, results = F, warning = F, message = F}
+### Get performance data for SETs and noSETs for each subject (BEFORE excluding subjects)
+# First, get ACC for each trial
+allfiles_prep = subset(allfiles_orig, bin_time > 5.5 & bin_time <= 6)
+trialwise_perf = ddply(allfiles_prep, .(Subject, TrialId, set, oddball, span), summarize,
+                        RT = mean(RT, na.rm = T),
+                        ACC = mean(ACC, na.rm = T),
+                        dilation4 = mean(rel_pupil, na.rm = T))
+trialwise_perf$set = factor(trialwise_perf$set, levels = c("SET", "noSET"))
+trialwise_perf$oddball = factor(trialwise_perf$oddball, levels = c("SET", "noSET-3", "noSET-4"))
+
+# Then, average over trials to get subject average accuracies
+source("FUNCTIONS/dprime.R")
+exclusion_data2 = ddply(trialwise_perf, .(Subject, set), summarize,
+                        RT = median(RT, na.rm = T),
+                        ACC = mean(ACC, na.rm = T))
+exclusion_data2b = reshape(subset(exclusion_data2, select = c("Subject", "set", "ACC")),
+        v.names = "ACC", idvar = "Subject", timevar = "set", direction = "wide")
+exclusion_data2b$dprime = with(exclusion_data2b, dprime(hits = ACC.SET, false.alarms = (1 - ACC.noSET)))
+exclusion_data2c = ddply(trialwise_perf, .(Subject), summarize,
+                        RT = median(RT, na.rm = T),
+                        ACC = mean(ACC, na.rm = T))
+
+gg_exclude_overall = ggplot(exclusion_data2b, aes(ACC.SET, ACC.noSET, color = !Subject %in% overall_chance_performers)) +
+  theme_bw() +
+  geom_point(alpha = .4, position = "jitter") +
+  geom_text(aes(label = ifelse(Subject %in% overall_chance_performers, Subject, "")), hjust = 0, vjust = 0, size = 3) +
+  theme(legend.position = "none")
+
+# Then, average over trials to get subject average accuracies
+exclusion_data3 = ddply(trialwise_perf, .(Subject, set, span), summarize,
+                        RT = median(RT, na.rm = T),
+                        ACC = mean(ACC, na.rm = T))
+exclusion_data3b = reshape(subset(exclusion_data3, select = c("Subject", "set", "span", "ACC")),
+        v.names = "ACC", idvar = c("Subject", "span"), timevar = "set", direction = "wide")
+exclusion_data3b$dprime = with(exclusion_data3b, dprime(hits = ACC.SET, false.alarms = (1 - ACC.noSET)))
+exclusion_data3c = ddply(trialwise_perf, .(Subject, span), summarize,
+                        RT = median(RT, na.rm = T),
+                        ACC = mean(ACC, na.rm = T))
+
+# Which performance measure should be used to exclude participants?
+if (use_dprime) {
+  span_chance_performers = unique(subset(exclusion_data3b, dprime < dprime_cutoff)$Subject)
+  overall_chance_performers = unique(subset(exclusion_data2b, dprime < dprime_cutoff)$Subject)
+} else {
+  span_chance_performers = unique(subset(exclusion_data3c, ACC < overall_cutoff)$Subject)
+  overall_chance_performers = unique(subset(exclusion_data2c, ACC < overall_cutoff)$Subject)
+}
+
+model_dprimes = data.frame(hits = NA, false.alarms = NA, dprime = NA)[0,]
+row = 1
+for (hits in (0:10)/10) {
+  for (fas in (0:10)/10) {
+    model_dprimes[row,] = data.frame(hits, fas, dprime(hits, fas))
+    row = row + 1
+  }
+}
+gg_show_dprimes = ggplot(model_dprimes, aes(hits, 1 - false.alarms, color = dprime > dprime_cutoff)) +
+  theme_bw() +
+  geom_point(alpha = .4) +
+  geom_text(aes(label = round(dprime, 2)), hjust = 0, vjust = 0, size = 3) +
+  theme(legend.position = "none")
+  
+gg_exclude_span = ggplot(exclusion_data3b, aes(ACC.SET, ACC.noSET, color = !Subject %in% span_chance_performers)) +
+  theme_bw() +
+  geom_point(alpha = .4) +
+  geom_text(aes(label = ifelse(Subject %in% span_chance_performers, Subject, "")), hjust = 0, vjust = 0, size = 3) +
+  theme(legend.position = "none") +
+  facet_wrap(~ span)
+gg_dprime_histogram = ggplot(exclusion_data3b, aes(dprime, fill = !Subject %in% span_chance_performers)) +
+  theme_bw() +
+  geom_vline(xintercept = dprime_cutoff, color = "red") +
+  geom_histogram() +
+  geom_text(aes(y = 1, label = ifelse(Subject %in% span_chance_performers, Subject, "")), hjust = 0, vjust = 0, size = 3) +
+  theme(legend.position = "none") +
+  facet_wrap(~ span)
+
+if (ggsave_figures) {
+  ggsave(plot = gg_show_dprimes, paste(figure_dir, "//gg_show_dprimes.png", sep = ""), width = 4, height = 4)
+  ggsave(plot = gg_exclude_span, paste(figure_dir, "//gg_exclude_span.png", sep = ""), width = 8, height = 8)
+  ggsave(plot = gg_dprime_histogram, paste(figure_dir, "//gg_dprime_histogram.png", sep = ""), width = 8, height = 8)
+}
+
+### Find subjects who need to be excluded based on their weak performance
+chance_performers = unique(c(overall_chance_performers, span_chance_performers))
+
+# Delete excluded subjects
+if (exclude_poor_subjects) {
+  allfiles = allfiles_orig[!allfiles_orig$Subject %in% chance_performers,]
+}
+```
+
+Excluded subjects: `r chance_performers`
+
+# Results
+
+## Response times and accuracy
+
+```{r, echo = F, results = F, warning = F, message = F, fig.height = 8, fig.width = 8}
+source("FUNCTIONS/mean.cl.boot.R")
+
+### Prepare data
+## Get performance data for SETs and noSETs for each subject (AFTER excluding subjects)
+# First, get performance for each trial
+trialwise_perf = ddply(allfiles, .(Subject, TrialId, set, oddball, span), summarize,
+                        RT = mean(RT, na.rm = T),
+                        ACC = mean(ACC, na.rm = T),
+                        dilation4 = mean(rel_pupil, na.rm = T))
+trialwise_perf$set = factor(trialwise_perf$set, levels = c("SET", "noSET"))
+trialwise_perf$oddball = factor(trialwise_perf$oddball, levels = c("SET", "noSET-3", "noSET-4"))
+
+# Then, average over spans to get subject average accuracies
+subjwise_perf_oddball = ddply(trialwise_perf, .(Subject, set, span, oddball), summarize,
+                  RT = median(RT, na.rm = T),
+                  ACC = mean(ACC, na.rm = T))
+subjwise_perf_set = ddply(trialwise_perf, .(Subject, set, span), summarize,
+                  RT = median(RT, na.rm = T),  # SHOULD NEVER BE USED!!
+                  ACC = mean(ACC, na.rm = T))
+cor_subjwise_perf_oddball = ddply(subset(trialwise_perf, ACC == 1), .(Subject, set, span, oddball), summarize,
+                      RT = median(RT, na.rm = T),
+                      ACC = mean(ACC, na.rm = T))
+cor_subjwise_perf_set = ddply(subset(trialwise_perf, ACC == 1), .(Subject, set, span), summarize,
+                      RT = median(RT, na.rm = T),
+                      ACC = mean(ACC, na.rm = T))
+
+## Add dprime
+subjwise_perf_oddball_SET = subset(subjwise_perf_oddball, set == "SET")
+subjwise_perf_oddball_SET$set = subjwise_perf_oddball_SET$oddball = NULL
+subjwise_perf_oddball_noSET3 = subset(subjwise_perf_oddball, oddball == "noSET-3")
+subjwise_perf_oddball_noSET3$set = NULL
+subjwise_perf_oddball_noSET4 = subset(subjwise_perf_oddball, oddball == "noSET-4")
+subjwise_perf_oddball_noSET4$set = NULL
+subjwise_perf_oddball_noSET3  = merge(subjwise_perf_oddball_SET, subjwise_perf_oddball_noSET3, by = c("Subject", "span"), suff = c("_SET", "_noSET"))
+subjwise_perf_oddball_noSET4  = merge(subjwise_perf_oddball_SET, subjwise_perf_oddball_noSET4, by = c("Subject", "span"), suff = c("_SET", "_noSET"))
+subjwise_perf_oddball_noSET3$dprime = with(subjwise_perf_oddball_noSET3, dprime(hits = ACC_SET, false.alarms = 1 - ACC_noSET))
+subjwise_perf_oddball_noSET4$dprime = with(subjwise_perf_oddball_noSET4, dprime(hits = ACC_SET, false.alarms = 1 - ACC_noSET))
+subjwise_perf_oddball_both = rbind(subjwise_perf_oddball_noSET3, subjwise_perf_oddball_noSET4)
+
+### d' plot (with bootstrapped 95% CI's)
+dprime_plot = ggplot(subjwise_perf_oddball_both, aes(span, dprime, fill = span, color = span)) +
+  # stat_summary(fun.data = mean.cl.boot, geom = "bar", B = 2000, tr = .2) +
+  theme_bw() +
+  # stat_summary(fun.y = mean, geom = "line", aes(group = 1), color = "black") +
+  # stat_summary(fun.data = mean.cl.boot, fun.args = list(B = 2000, tr = .2), geom = "pointrange") +
+  stat_summary(fun.data = mean.cl.boot, fun.args = list(B = 2000, tr = .2, ci = .68), geom = "line", aes(group = 1), color = "black") +
+  stat_summary(fun.data = mean.cl.boot, fun.args = list(B = 2000, tr = .2, ci = .68), geom = "pointrange") +
+  scale_color_manual(values = span_colors(4)) +
+  scale_fill_manual(values = span_colors(4)) +
+  labs(x = "", y = "d'") +
+  coord_trans(y = "log") +
+  theme(legend.position = "none") +
+  facet_wrap(~ oddball)
+
+### RT plot (with bootstrapped 95% CI's)
+RT_plot = ggplot(cor_subjwise_perf_set, aes(span, RT, group = set, color = set)) +  #, color = span, fill = span, shape = set
+  theme_bw() +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "pointrange") +
+  scale_color_manual(values = c("dark grey", "dark orange")) +
+  # coord_trans(y = "log10") +
+  labs(x = "", y = "RT (msec)") +
+  scale_x_discrete(labels = c("0sp", "1sp", "2sp", "3sp")) +
+  # coord_cartesian(ylim = c(0, 1)) +
+  theme(legend.position = "none") +
+  facet_wrap(~ set)
+
+### False alarms / misses plot (with bootstrapped 95% CI's)
+ACC_plot = ggplot(subjwise_perf_set, aes(span, 100-ACC*100, group = set, color = set)) +
+  theme_bw() +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "pointrange") +
+  scale_color_manual(values = c("dark grey", "dark orange")) +
+  labs(x = "", y = "Error rate (%)") +
+  scale_x_discrete(labels = c("0sp", "1sp", "2sp", "3sp")) +
+  coord_cartesian(ylim = c(1, 25)) +
+  # coord_trans(y = "log10") +
+  theme(legend.position = "none") +
+  facet_wrap(~ set)
+
+### Make figures black-and-white
+ACC_plot_bw = ACC_plot + 
+  scale_color_manual(values = bw_colors)
+RT_plot_bw = RT_plot +
+  scale_color_manual(values = bw_colors)
+
+if (ggsave_figures) {
+  ACC_and_RT_plot = arrangeGrob(ACC_plot, RT_plot, dprime_plot, nrow = 3)
+  plot(ACC_and_RT_plot)
+  ggsave(paste(figure_dir, "/Figure3_.png", sep = ""), ACC_and_RT_plot, width = 4, height = 8)
+  
+  ggsave(paste(figure_dir, "/Figure3acc_bw_.png", sep = ""), ACC_plot_bw, width = one_by_two$width, height = one_by_two$height)
+  ggsave(paste(figure_dir, "/Figure3rt_bw_.png", sep = ""), RT_plot_bw, width = 3.5, height = 2.5)
+  
+  # ACC_and_RT_plot2 = arrangeGrob(ACC_plot2, RT_plot2, dprime_plot2, nrow = 3)
+  # plot(ACC_and_RT_plot2)
+  # ggsave(paste(figure_dir, "//Figure3s_.png", sep = ""), ACC_and_RT_plot2, width = 6, height = 8)
+}
+```
+
+### Statistical tests
+
+```{r, echo = F, warning = F, message = F}
+### Prepare data
+cor_subjwise_perf_oddball$log_RT = log(cor_subjwise_perf_oddball$RT + 1)
+subjwise_perf_oddball$log_errors = log(1 - subjwise_perf_oddball$ACC + .01)
+cor_subjwise_perf_set$log_RT = log(cor_subjwise_perf_set$RT + 1)
+subjwise_perf_set$log_errors = log(1 - subjwise_perf_set$ACC + .01)
+
+# Check skewness
+(p_skew_RT = agostino.test(cor_subjwise_perf_oddball$RT))
+(p_skew_logRT = agostino.test(cor_subjwise_perf_oddball$log_RT))
+(p_skew_RT = agostino.test(cor_subjwise_perf_set$RT))
+(p_skew_logRT = agostino.test(cor_subjwise_perf_set$log_RT))
+
+(p_skew_errors = agostino.test(1 - subjwise_perf_oddball$ACC + .01))
+(p_skew_logerrors = agostino.test(subjwise_perf_oddball$log_errors))
+(p_skew_errors = agostino.test(1 - subjwise_perf_set$ACC + .01))
+(p_skew_logerrors = agostino.test(subjwise_perf_set$log_errors))
+
+### Run pairwise t-tests
+with(subset(cor_subjwise_perf_set, set == "SET"), pairwise.t.test(log_RT, span, p.adjust.method = "bonferroni"))
+t.test(log_RT ~ span, data = subset(cor_subjwise_perf_set, set == "SET" & span %in% c("1span", "3span")))  # to get the lowest t-value
+with(subset(cor_subjwise_perf_set, set == "noSET"), pairwise.t.test(log_RT, span, p.adjust.method = "bonferroni"))
+t.test(log_RT ~ span, data = subset(cor_subjwise_perf_set, set == "noSET" & span %in% c("0span", "3span")))  # to get the lowest t-value
+# with(subset(cor_subjwise_perf_oddball, oddball == "noSET-4"), pairwise.t.test(log_RT, span, p.adjust.method = "bonferroni"))
+
+with(subset(subjwise_perf_set, set == "SET"), pairwise.t.test(log_errors, span, p.adjust.method = "bonferroni"))  # to get the p-values
+t.test(log_errors ~ span, data = subset(subjwise_perf_set, set == "SET" & span %in% c("0span", "3span")))  # to get the lowest t-value
+with(subset(subjwise_perf_set, set == "noSET"), pairwise.t.test(log_errors, span, p.adjust.method = "bonferroni"))
+t.test(log_errors ~ span, data = subset(subjwise_perf_set, set == "noSET" & span %in% c("1span", "2span")))  # to get the lowest t-value
+# with(subset(subjwise_perf_oddball, oddball == "noSET-4"), pairwise.t.test(log_errors, span, p.adjust.method = "bonferroni"))
+
+# Also compare No-SET-3 and No-SET-4 trials
+t.test(log_RT ~ oddball, data = subset(cor_subjwise_perf_oddball, set == "noSET" & span == "0span"), paired = T)
+t.test(log_RT ~ oddball, data = subset(cor_subjwise_perf_oddball, set == "noSET" & !span %in% c("0span")), paired = T)
+mean(subset(cor_subjwise_perf_oddball, oddball == "noSET-3" & !span %in% c("0span"))$RT)
+mean(subset(cor_subjwise_perf_oddball, oddball == "noSET-4" & !span %in% c("0span"))$RT)
+
+t.test(log_errors ~ oddball, data = subset(subjwise_perf_oddball, set == "noSET" & span == "0span"), paired = T)
+t.test(log_errors ~ oddball, data = subset(subjwise_perf_oddball, set == "noSET" & !span %in% c("0span")), paired = T)
+1-mean(subset(subjwise_perf_oddball, oddball == "noSET-3" & !span %in% c("0span"))$ACC)
+1-mean(subset(subjwise_perf_oddball, oddball == "noSET-4" & !span %in% c("0span"))$ACC)
+  
+### Regression
+# Define contrasts
+# SETvsnoSETs    = c( 2, -1, -1)
+# noSET3vsnoSET4 = c( 0, -1,  1)
+# SnS3 = c( 1, -1,  0)
+# SnS4 = c( 1,  0, -1)
+# nul  = c( 0,  0,  1)
+# contrasts(cor_subjwise_perf_set$oddball) = cbind(SnS4, nul) #cbind(SETvsnoSETs, noSET3vsnoSET4)
+contrasts(cor_subjwise_perf_set$span) = contr.poly(4)
+
+ggplot(trialwise_perf, aes(span, RT)) + geom_boxplot()
+qplot(sample = trialwise_perf$RT, stat = 'qq')
+hist(trialwise_perf$RT)
+shapiro.test(trialwise_perf$RT)
+agostino.test(trialwise_perf$RT)
+trialwise_perf$log_RT = log(trialwise_perf$RT + 1)
+ggplot(trialwise_perf, aes(span, log_RT)) + geom_boxplot()
+qplot(sample = trialwise_perf$log_RT, stat = 'qq')
+hist(trialwise_perf$log_RT)
+shapiro.test(trialwise_perf$log_RT)
+agostino.test(trialwise_perf$log_RT)
+contrasts(trialwise_perf$span) = contr.poly(4)
+contrasts(trialwise_perf$oddball) = cbind(c(-2, 1, 1), c(0, -1, 1))
+contrasts(trialwise_perf$set) = contr.sum(2)
+trialwise_perf$ACC = factor(trialwise_perf$ACC)
+  
+if (run_regression_models) {
+  # Create the grand RT model
+  baseline_mod     = lme(log_RT ~ 1, random = ~1|Subject, data = cor_subjwise_perf_set, method = "ML", na.action = na.omit)
+  odd_mod          = update(baseline_mod, .~. + set)
+  span_odd_mod     = update(baseline_mod, .~. + span + set)
+  span_x_odd_mod   = update(baseline_mod, .~. + span * set)
+  RT_grand_model   = anova(baseline_mod,
+                           odd_mod, span_odd_mod, span_x_odd_mod)
+  RT_grand_model
+  
+  RT_lmer = lmer(log_RT ~ set * span + (set * span | Subject),
+                 data = subset(trialwise_perf, ACC == 1),
+                 na.action = na.omit,
+                 REML = F,
+                 control = lmerControl(optCtrl = list(maxfun = 1e6)))
+  summary(RT_lmer)
+  RTodd_lmer = lmer(log_RT ~ oddball * span + (oddball * span | Subject),
+                 data = subset(trialwise_perf, ACC == 1),
+                 na.action = na.omit,
+                 REML = F,
+                 control = lmerControl(optCtrl = list(maxfun = 1e6)))
+  summary(RTodd_lmer)
+  ACC_lmer = glmer(ACC ~ set * span + (set * span | Subject),
+                 data = trialwise_perf,
+                 na.action = na.omit,
+                 family = binomial,
+                 control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e6)))
+  summary(ACC_lmer)
+  anova(ACC_lmer, type = 3)
+  ACCodd_lmer = glmer(ACC ~ oddball * span + (oddball * span | Subject),
+                 data = trialwise_perf,
+                 na.action = na.omit,
+                 family = binomial,
+                 control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e6)))
+  summary(ACC_lmer)
+}
+# # Create the separate RT models for SET, noSET-3, and noSET-4
+# baseline_mod      = lme(log_RT ~ 1, random = ~1|Subject/span, data = subset(cor_subjwise_perf_set, set == "SET"), method = "ML", na.action = na.omit)
+# span_SET_mod      = update(baseline_mod, .~. + span)
+# RT_SET_model = anova(baseline_mod, span_SET_mod)
+# summary(span_SET_mod)
+# baseline_mod      = lme(log_RT ~ 1, random = ~1|Subject/span, data = subset(cor_subjwise_perf_set, set == "noSET"), method = "ML", na.action = na.omit)
+# span_noSET3_mod   = update(baseline_mod, .~. + span)
+# RT_noSET3_model = anova(baseline_mod, span_noSET3_mod)
+# summary(span_noSET3_mod)
+# # baseline_mod      = lme(log_RT ~ 1, random = ~1|Subject/span, data = subset(cor_subjwise_perf_set, oddball == "noSET-4"), method = "ML", na.action = na.omit)
+# # span_noSET4_mod   = update(baseline_mod, .~. + span)
+# # RT_noSET4_model = anova(baseline_mod, span_noSET4_mod)
+# # summary(span_noSET4_mod)
+# 
+# # Error rates
+# # baseline_mod      = glmer(ACC ~ 1 + (1|Subject/oddball/span), family = binomial(), na.action = na.omit, data = trialwise_perf)
+# baseline_mod      = lme(log_errors ~ 1, random = ~1|Subject, data = subjwise_perf_set, method = "ML", na.action = na.omit)
+# odd_mod           = update(baseline_mod, .~. + set)
+# span_odd_mod      = update(baseline_mod, .~. + span + set)
+# span_x_odd_mod    = update(baseline_mod, .~. + span * set)
+# (error_grand_model = anova(baseline_mod,
+#                           odd_mod, span_odd_mod, span_x_odd_mod))
+# (summary(span_x_odd_mod))
+# 
+# contrasts(subjwise_perf_set$span) = contr.poly(4)
+# baseline_mod      = lme(log_errors ~ 1, random = ~1|Subject, data = subset(subjwise_perf_set, set == "SET"), method = "ML", na.action = na.omit)
+# span_SET_mod      = update(baseline_mod, .~. + span)
+# summary(span_SET_mod)
+# baseline_mod      = lme(log_errors ~ 1, random = ~1|Subject, data = subset(subjwise_perf_set, set == "noSET"), method = "ML", na.action = na.omit)
+# span_noSET3_mod   = update(baseline_mod, .~. + span)
+# summary(span_noSET3_mod)
+# # baseline_mod      = lme(log_errors ~ 1, random = ~1|Subject, data = subset(subjwise_perf_oddball, set == "noSET-4"), method = "ML", na.action = na.omit)
+# # span_noSET4_mod      = update(baseline_mod, .~. + span)
+# # summary(span_noSET4_mod)
+# 
+# subjwise_perf_oddball_012span = subset(subjwise_perf_oddball, span != "3span")
+# subjwise_perf_oddball_012span$span = factor(subjwise_perf_oddball_012span$span)
+# contrasts(subjwise_perf_oddball_012span$span) = contr.poly(3)
+# baseline_mod      = lme(log_errors ~ 1, random = ~1|Subject, data = subset(subjwise_perf_oddball_012span, oddball == "noSET-4"), method = "ML", na.action = na.omit)
+# span_noSET4_mod      = update(baseline_mod, .~. + span)
+```
+
+## Pupil responses to oddballs
+
+```{r, echo = F, warning = F, message = F, fig.height = 5, fig.width = 8}
+### PUPIL DILATION FOR SET, NOSET-3, AND NOSET-4
+## Prepare data
+if (preprocess_data) {
+  # Average over trials to get pupil dilation for each subject, for SETs and noSETs of each span
+  pupildat = ddply(allfiles, .(Subject, ACC, set, oddball, span, bin_time), summarize,
+                   mean_rel_pupil  = mean(rel_pupil, na.rm = T))
+  colnames(pupildat) = c("Subject", "ACC", "set", "oddball", "span", "rel.time", "rel.pupil")
+  write.csv(pupildat, paste("pupildat_nb_", data_year, ".csv", sep = ""), row.names = F)
+}
+pupildat = read.csv(paste("pupildat_nb_", data_year, ".csv", sep = ""))
+pupildat$set     = factor(pupildat$set, levels = c("SET", "noSET"))
+pupildat$oddball = factor(pupildat$oddball, levels = c("SET", "noSET-3", "noSET-4"))
+pupildat_ACC1 = subset(pupildat, ACC == 1)
+pupildat_ACC1$bigspan = as.character(pupildat_ACC1$span)
+pupildat_ACC1$bigspan[pupildat_ACC1$span %in% c("1span", "2span", "3span")] = "123span"
+pupildat_ACC1$bigspan = factor(pupildat_ACC1$bigspan)
+
+allfiles_ACC1 = subset(allfiles, ACC == 1)
+allfiles_ACC1$bigspan = as.character(allfiles_ACC1$span)
+allfiles_ACC1$bigspan[allfiles_ACC1$span %in% c("1span", "2span", "3span")] = "123span"
+allfiles_ACC1$bigspan = factor(allfiles_ACC1$bigspan)
+
+### Plot
+resp_fix_labels = data.frame(x = c(6.7, 8), y = rep(-0.03, 2), label = c(" Resp", "  Fix"))
+oddball_plot = ggplot(pupildat_ACC1, aes(rel.time, rel.pupil, color = oddball, fill = oddball)) +
+  geom_tile(data = tile_data, aes(x = x, y = y, width = width, height = height), inherit.aes = F, fill = "white") +
+  geom_vline(xintercept = response_prompt_time, size = 1.5) +
+  geom_text(data = tile_data, aes(x = x, y = -0.03, label = labels), inherit.aes = F) +
+  geom_text(data = resp_fix_labels, aes(x = x, y = y, label = label), inherit.aes = F) +
+  labs(x = 'Time (s)', y = 'Pupil dilation (mm)', color = ' ', fill = ' ') +
+  theme(legend.position = c(.1, .8), legend.background = element_rect(fill = "transparent")) +
+  scale_x_continuous(breaks = seq(0, 9, 1.5)) +
+  facet_grid(~ bigspan)
+oddball_plot = oddball_plot +
+  stat_summary(fun.y = mean, geom = 'point') +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = 'smooth', alpha = 0.2) +
+  scale_color_manual(values = oddball_colors) +
+  scale_fill_manual(values = oddball_colors)
+
+### Add t-test dots
+# oddpupildat_ttests$rel.time = as.numeric(as.character(oddpupildat_ttests$rel.time))
+# oddpupildat_ttests$effect = factor(oddpupildat_ttests$effect, levels = c("noSET-3 vs SET", "noSET-4 vs SET"))
+# subs = subset(oddpupildat_ttests, sig == "sig.")
+# subs$y = 0.18; subs$y[subs$effect == "noSET-3 vs SET"] = 0.185
+# oddball_plot = oddball_plot +
+#   geom_point(data = subs, inherit.aes = F, aes(x = rel.time, y = y), color = "blue") +
+#   facet_grid(~ bigspan)
+
+### Add response times
+RT_data = ddply(subjwise_perf_oddball, .(oddball, set, span), summarize,
+                RT_mean = mean.cl.boot(RT, B = 2000, tr = .1)[1],
+                RT_lower = mean.cl.boot(RT, B = 2000, tr = .1)[2],
+                RT_upper = mean.cl.boot(RT, B = 2000, tr = .1)[3])
+RT_data$RT_mean = 6 + RT_data$RT_mean/1000
+RT_data$RT_lower = 6 + RT_data$RT_lower/1000
+RT_data$RT_upper = 6 + RT_data$RT_upper/1000
+RT_data$bigspan = as.character(RT_data$span)
+RT_data$bigspan[RT_data$bigspan %in% c("1span", "2span", "3span")] = "123span"
+RT_data_bigspan = ddply(RT_data, .(oddball, set, bigspan), summarize,
+      RT_mean = mean(RT_mean),
+      RT_lower = mean(RT_lower),
+      RT_upper = mean(RT_upper))
+# Location of RTs in plot
+rtbox = 0
+dist = .006
+RT_data_bigspan$y = c(rep(rtbox-2*dist, 2), rep(rtbox-dist, 2), rep(rtbox, 2))
+RT_data_long = melt(RT_data_bigspan, id.vars = c("set", "bigspan", "oddball", "y"))
+# Add RTs and box around RTs to the plot
+oddball_plot = oddball_plot +
+  geom_point(data = RT_data_bigspan, aes(x = RT_mean, y = y, color = oddball), inherit.aes = F) +
+  geom_line(data = subset(RT_data_long, variable %in% c("RT_lower", "RT_upper")), aes(x = value, y = y)) +
+  geom_rect(aes(xmin = 6, xmax = 7, ymin = (rtbox - 3*dist), ymax = rtbox + dist), color = "black", fill = "transparent", inherit.aes = F)
+
+### Save the plot
+if (ggsave_figures) {
+  plot(oddball_plot)
+  ggsave(plot = oddball_plot, paste(figure_dir, "/Figure4_.png", sep = ""), width = 6, height = 3.5)
+}
+
+### INCORRECT TRIALS ONLY
+### Prepare data
+pupildat_ACC0 = subset(pupildat, ACC == 0)
+pupildat_ACC0$bigspan = as.character(pupildat_ACC0$span)
+pupildat_ACC0$bigspan[pupildat_ACC0$span %in% c("1span", "2span", "3span")] = "123span"
+pupildat_ACC0$bigspan = factor(pupildat_ACC0$bigspan)
+
+### Set up plot basics
+# resp_fix_labels = data.frame(x = c(6.7, 8), y = rep(-0.03, 2), label = c("Resp.", "Fix."))
+oddball_plot_ACC0 = ggplot(subset(pupildat_ACC0, span != "0span"), aes(rel.time, rel.pupil, color = oddball, fill = oddball)) +
+  geom_tile(data = tile_data, aes(x = x, y = y, width = width, height = height), inherit.aes = F, fill = "white") +
+  geom_vline(xintercept = response_prompt_time, size = 1.5) +
+  geom_text(data = tile_data, aes(x = x, y = -0.05, label = labels), inherit.aes = F) +
+  geom_text(data = resp_fix_labels, aes(x = x, y = -0.05, label = label), inherit.aes = F) +
+  labs(x = 'Time (s)', y = 'Pupil dilation (mm)', color = ' ', fill = ' ') +
+  theme(legend.position = c(.15, .8), legend.background = element_rect(fill = "transparent")) +
+  scale_x_continuous(breaks = seq(0, 9, 1.5)) +
+  facet_grid(~ bigspan)
+
+### Add pupil dilation
+oddball_plot_ACC0 = oddball_plot_ACC0 +
+  stat_summary(fun.y = mean, geom = 'point') +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = 'smooth', alpha = 0.2) +
+  scale_color_manual(values = oddball_colors) +
+  scale_fill_manual(values = oddball_colors)
+
+### Save the plot
+if (ggsave_figures) {
+  plot(oddball_plot_ACC0)
+  ggsave(plot = oddball_plot_ACC0, paste(figure_dir, "/SFigure4_.png", sep = ""), width = 5, height = 5)
+}
+```
+
+### Statistical tests
+
+#### t-weights over time
+
+```{r, echo = F, warning = F, message = F, fig.cap = "Statistics on pupil dilation: Differences between spans over time"}
+### Prepare data
+allfiles_ACC1 = subset(allfiles, ACC == 1)
+
+### Calculate differences between SET & noSETs for 0-span and the combination of the other three
+oddpupildat_ttests      = data.frame(bigspan = NA, effect = NA, rel.time = NA, df = NA, t = NA, p = NA, ci_l = NA, ci_u = NA, sig = NA)[0,]
+row = 1
+bins = as.numeric(as.character(unique(allfiles_ACC1$bin_time)))
+if (preprocess_data) {
+  for (spa in list("0span", c("1span", "2span", "3span"))) {
+    for (bin in bins) {
+      
+      # Prepare data
+      bin_dat = subset(allfiles_ACC1, span %in% spa & bin_time == bin, select = c("Subject", "oddball", "ACC", "span", "rel_pupil"))
+      if (spa == c("1span", "2span", "3span")) {span = "123span"} else {span = spa}
+
+      # Repeated-measures t-tests
+      av_bin_dat = ddply(bin_dat, .(Subject, oddball, span), summarize,
+                         rel_pupil = median(rel_pupil, na.rm = T))
+      av_bin_dat_wide = reshape(av_bin_dat, v.names = "rel_pupil", idvar = c("Subject", "span"), timevar = "oddball", direction = "wide")
+      av_bin_dat_wide$pupil_nS3 = av_bin_dat_wide[,"rel_pupil.noSET-3"] - av_bin_dat_wide[,"rel_pupil.SET"]
+      av_bin_dat_wide$pupil_nS4 = av_bin_dat_wide[,"rel_pupil.noSET-4"] - av_bin_dat_wide[,"rel_pupil.SET"]
+      
+      # Only run the t-tests if there are more than 3 valid observations
+      if (sum(!is.na(av_bin_dat_wide$pupil_nS3)) > 3) {
+        ttest_nS3 = with(av_bin_dat_wide, t.test(pupil_nS3))
+      } else {
+        ttest_nS3$statistic = ttest_nS3$parameter = ttest_nS3$conf.int = NA; ttest_nS3$p.value = 0
+      }
+      if (sum(!is.na(av_bin_dat_wide$pupil_nS4)) > 3) {
+        ttest_nS4 = with(av_bin_dat_wide, t.test(pupil_nS4))
+      } else {
+        ttest_nS4$statistic = ttest_nS4$parameter = ttest_nS4$conf.int = NA; ttest_nS4$p.value = 0
+      }
+      
+      t3  = ttest_nS3$statistic
+      df3 = ttest_nS3$parameter
+      p3  = ttest_nS3$p.value
+      ci3 = ttest_nS3$conf.int
+      t4  = ttest_nS4$statistic
+      df4 = ttest_nS4$parameter
+      p4  = ttest_nS4$p.value
+      ci4 = ttest_nS4$conf.int
+      sig_nS3 = "ns."; if (p3 <= 0.05) {sig_nS3 = "sig."}
+      sig_nS4 = "ns."; if (p4 <= 0.05) {sig_nS4 = "sig."}
+      
+      # Save results
+      oddpupildat_ttests[row,]   = c(span, "noSET-3 vs SET", bin, df3, t3, p3, ci3, sig_nS3)
+      oddpupildat_ttests[row+1,] = c(span, "noSET-4 vs SET", bin, df4, t4, p4, ci4, sig_nS4)
+      
+      ### Move into the next row of the dataframe
+      row = row + 2
+    }
+  }
+  write.csv(oddpupildat_ttests, "oddpupildat_ttests_nb.csv")
+} else {
+  oddpupildat_ttests = read.csv("oddpupildat_ttests_nb.csv")
+}
+
+# Fix dataframe
+oddpupildat_ttests$rel.time = as.numeric(oddpupildat_ttests$rel.time)
+oddpupildat_ttests$df = as.numeric(oddpupildat_ttests$df)
+oddpupildat_ttests$t = as.numeric(oddpupildat_ttests$t)
+oddpupildat_ttests$p = as.numeric(oddpupildat_ttests$p)
+oddpupildat_ttests$ci_l = as.numeric(oddpupildat_ttests$ci_l)
+oddpupildat_ttests$ci_u = as.numeric(oddpupildat_ttests$ci_u)
+crit_t_value = qt(0.95, 60)
+oddpupildat_ttests$sig = as.numeric(as.character(factor(oddpupildat_ttests$t >= crit_t_value | oddpupildat_ttests$t <= -crit_t_value, labels = c(1, 0)))) # must be numeric for scale_alpha to handle it
+
+### Plots
+# t-values
+# resp_fix_labels = data.frame(x = c(6.7, 8), y = rep(-0.03, 2), label = c("Resp.", "Fix."))
+pupil_effect_plot_ttests = ggplot(subset(oddpupildat_ttests, rel.time > 0.2),
+                                  aes(rel.time, t, color = effect, group = effect)) +#, alpha = sig
+  geom_tile(data = tile_data, aes(x = x, y = y, width = width, height = height), inherit.aes = F, fill = "white") +
+  geom_vline(xintercept = response_prompt_time, size = 1.5) +
+  geom_hline(yintercept = c(0, crit_t_value, -crit_t_value), color = "grey") +
+  # geom_text(data = tile_data, aes(x = x, y = -0.03, label = labels), inherit.aes = F) +
+  # geom_text(data = resp_fix_labels, aes(x = x, y = y, label = label), inherit.aes = F) +
+  geom_point() +
+  geom_line() +
+  # geom_errorbar(aes(x = rel.time, ymin = ci_l, ymax = ci_u)) +
+  scale_color_manual(values = oddball_colors[2:3]) +
+  # scale_alpha(range = c(1, .2)) +
+  theme(legend.position = "none") +
+  facet_grid(~ bigspan)
+
+if (ggsave_figures) {
+  plot(pupil_effect_plot_ttests)
+  ggsave(plot = pupil_effect_plot_ttests, paste(figure_dir, "/Figure4inlet_.png", sep = ""), width = 10, height = 5)
+}
+```
+
+#### Overall regression model
+
+```{r, echo = F, warning = F, message = F}
+### Prepare data
+allfiles_ACC1$position = NA
+allfiles_ACC1$position[allfiles_ACC1$bin_time > 1 & allfiles_ACC1$bin_time <= 1.5] = 1
+allfiles_ACC1$position[allfiles_ACC1$bin_time > 2.5 & allfiles_ACC1$bin_time <= 3] = 2
+allfiles_ACC1$position[allfiles_ACC1$bin_time > 4 & allfiles_ACC1$bin_time <= 4.5] = 3
+allfiles_ACC1$position[allfiles_ACC1$bin_time > 5.5 & allfiles_ACC1$bin_time <= 6] = 4
+allfiles_ACC1$position[allfiles_ACC1$bin_time > 7 & allfiles_ACC1$bin_time <= 7.5] = "resp"
+allfiles_ACC1$oddball[is.na(allfiles_ACC1$oddball)] = "SET"
+allfiles_ACC1$oddball = factor(allfiles_ACC1$oddball)
+allfiles_ACC1_s = subset(allfiles_ACC1, position %in% c(1, 2, 3, 4))
+allfiles_ACC1_stats = ddply(allfiles_ACC1_s, .(Subject, TrialId, set, bigspan, oddball, position, ACC), summarize,
+                               rel_pupil = mean(rel_pupil, na.rm = T))
+allfiles_ACC1_stats$position = factor(allfiles_ACC1_stats$position)
+
+### Specify (orthogonal) contrasts [contrasts are orthogonal, when multiplying contrasts of each columns with each other and adding up gives 0]
+SETvsnoSETs   = c(-2,  1,  1)
+noSET3vsnoSET4= c( 0, -1,  1)
+contrasts(allfiles_ACC1_stats$oddball) = cbind(SETvsnoSETs, noSET3vsnoSET4)
+contrasts(allfiles_ACC1_stats$position) = contr.poly(4)
+# contrasts(allfiles_ACC1_stats$span) = contr.poly(4)
+
+### Create the model
+# Silvia's super-small model (pupil ~ position * oddball)
+if (run_regression_models) {
+  baseline_mod__ = lme(rel_pupil ~ 1, random = ~1|Subject/oddball/bigspan/position, data = subset(allfiles_ACC1_stats, position %in% c(3, 4)), method = "ML", na.action = na.omit)
+  pos_mod__      = update(baseline_mod__, .~. + position)
+  odd_mod__      = update(baseline_mod__, .~. + position + oddball)
+  pos_odd_mod__  = update(baseline_mod__, .~. + position * oddball)
+  
+  oddball_model__ = anova(baseline_mod__,
+                         pos_mod__, odd_mod__,
+                         pos_odd_mod__)
+  
+  baseline_mod__ = lme(rel_pupil ~ 1, random = ~1|Subject/oddball/bigspan/position, data = subset(allfiles_ACC1_stats, position %in% c(3, 4) & bigspan == "0span"), method = "ML", na.action = na.omit)
+  pos_mod__      = update(baseline_mod__, .~. + position)
+  odd_mod__      = update(baseline_mod__, .~. + position + oddball)
+  pos_odd_mod0__ = update(baseline_mod__, .~. + position * oddball)
+  
+  oddball_model0__ = anova(baseline_mod__,
+                         pos_mod__, odd_mod__,
+                         pos_odd_mod0__)
+  
+  baseline_mod__ = lme(rel_pupil ~ 1, random = ~1|Subject/oddball/bigspan/position, data = subset(allfiles_ACC1_stats, position %in% c(3, 4) & bigspan == "123span"), method = "ML", na.action = na.omit)
+  pos_mod__      = update(baseline_mod__, .~. + position)
+  odd_mod__      = update(baseline_mod__, .~. + position + oddball)
+  pos_odd_mod123__= update(baseline_mod__, .~. + position * oddball)
+  
+  oddball_model123__ = anova(baseline_mod__,
+                         pos_mod__, odd_mod__,
+                         pos_odd_mod123__)
+  
+  # The complete model (pupil ~ bigspan * position * oddball)
+  baseline_mod_ = lme(rel_pupil ~ 1, random = ~1|Subject/oddball/bigspan/position, data = subset(allfiles_ACC1_stats, position %in% c(3, 4)), method = "ML", na.action = na.omit)
+  span_mod_        = update(baseline_mod_, .~. + bigspan)
+  pos_mod_         = update(baseline_mod_, .~. + bigspan + position)
+  odd_mod_         = update(baseline_mod_, .~. + bigspan + position + oddball)
+  pos_odd_mod_     = update(baseline_mod_, .~. + bigspan + position + oddball + position:oddball)
+  unintr_mod_      = update(pos_odd_mod_,  .~. + position:bigspan + oddball:bigspan)
+  span_pos_odd_mod_= update(unintr_mod_,   .~. + position:bigspan:oddball)
+  
+  oddball_model_ = anova(baseline_mod_,
+                         span_mod_, pos_mod_, odd_mod_,
+                         pos_odd_mod_, unintr_mod_,
+                         span_pos_odd_mod_)
+  
+  # # The big model (pupil ~ TrialID + position * span + oddball:position:span; only positions 3 & 4)
+  # baseline_mod = lme(rel_pupil ~ 1, random = ~1|Subject/oddball/span/position, data = subset(allfiles_ACC1_stats, position %in% c(3, 4)), method = "ML", na.action = na.omit)
+  # trial_mod    = update(baseline_mod, .~. + TrialId)
+  # pos_mod      = update(baseline_mod, .~. + TrialId + position)
+  # span_mod     = update(baseline_mod, .~. + TrialId + position + span)
+  # pos_span_mod = update(baseline_mod, .~. + TrialId + position * span)
+  # odd_mod      = update(pos_span_mod, .~. + oddball)
+  # odd_pos_span_mod=update(pos_span_mod,.~.+ oddball:position:span)
+  # 
+  # oddball_model = anova(baseline_mod,
+  #                             trial_mod, pos_mod, span_mod,
+  #                             pos_span_mod,
+  #                             odd_mod,
+  #                             odd_pos_span_mod)
+}
+```
+
+### Relationship between accuracy / RTs and oddball pupil dilation
+
+```{r, echo = F, warning = F, message = F}
+### Pupil dilation for each item
+# Prepare data
+allf = allfiles
+allf$item = NA
+allf$item[allf$bin_time >= 1 & allf$bin_time <= 1.5] = 1
+allf$item[allf$bin_time >= 2.5 & allf$bin_time <= 3] = 2
+allf$item[allf$bin_time >= 4 & allf$bin_time <= 4.5] = 3
+allf$item[allf$bin_time >= 5.5 & allf$bin_time <= 6] = 4
+odd_idx_dat20 = ddply(subset(allf, !is.na(item)),
+                     .(Subject, TrialId, ACC, span, oddball, item), summarize,
+                     pupil = mean(rel_pupil, na.rm = T))
+odd_idx_dat20$item = factor(odd_idx_dat20$item)
+odd_idx_dat20$ACC = factor(odd_idx_dat20$ACC)
+odd_idx_dat20$bigspan = as.character(odd_idx_dat20$span)
+odd_idx_dat20$bigspan[odd_idx_dat20$bigspan != "0span"] = "123span"
+odd_idx_dat20$bigspan = factor(odd_idx_dat20$bigspan)
+odd_idx_dat20$fill = "grey"
+odd_idx_dat20$fill[(odd_idx_dat20$oddball == "noSET-3" & odd_idx_dat20$item == 3) |
+                   (odd_idx_dat20$oddball == "noSET-4" & odd_idx_dat20$item == 4)] = "red"
+# Plot
+gg_i34_odd_ACC1 = ggplot(subset(odd_idx_dat20, ACC == 1), aes(item, pupil, fill = fill)) +
+  stat_summary(fun.data = mean.cl.boot, geom = "bar") +
+  stat_summary(fun.data = mean.cl.boot, geom = "pointrange") +
+  scale_fill_manual(values = c("grey", "red")) +
+  theme(legend.position = "none") +
+  coord_cartesian(y = c(0, 0.22)) +
+  facet_grid(oddball ~ span)
+gg_i34_odd_ACC0 = ggplot(subset(odd_idx_dat20, ACC == 0), aes(item, pupil, fill = fill)) +
+  stat_summary(fun.data = mean.cl.boot, geom = "bar") +
+  stat_summary(fun.data = mean.cl.boot, geom = "pointrange") +
+  scale_fill_manual(values = c("grey", "red")) +
+  theme(legend.position = "none") +
+  coord_cartesian(y = c(0, 0.22)) +
+  facet_grid(oddball ~ span)
+
+if (ggsave_figures) {
+  gg_i34_odd = arrangeGrob(gg_i34_odd_ACC1, gg_i34_odd_ACC0, ncol = 1)
+  plot(gg_i34_odd)
+  ggsave(plot = gg_i34_odd, paste(figure_dir, "/SFigure4b_.png", sep = ""), width = 7, height = 9)
+}
+
+### Pupil dilation from item 3 to item 4 - correct and incorrect trials
+# Prepare data
+odd_idx_dat10 = reshape(subset(odd_idx_dat20, select = -fill), v.names = "pupil", idvar = c("Subject", "TrialId", "ACC", "span", "bigspan", "oddball"), timevar = "item", direction = "wide")
+odd_idx_dat10$ACC = factor(odd_idx_dat10$ACC, levels = c(1, 0), labels = c("correct", "incorrect"))
+odd_idx_dat10$incr4 = with(odd_idx_dat10, pupil.4 - pupil.3)
+odd_idx_dat10$incr3 = with(odd_idx_dat10, pupil.3 - pupil.2)
+odd_idx_dat10$incr2 = with(odd_idx_dat10, pupil.2 - pupil.1)
+
+odd_idx_dat11 = ddply(odd_idx_dat10, .(Subject, ACC, span, oddball, bigspan), summarize,
+      pupil.1 = mean(pupil.1, na.rm = T),
+      pupil.2 = mean(pupil.2, na.rm = T),
+      pupil.3 = mean(pupil.3, na.rm = T),
+      pupil.4 = mean(pupil.4, na.rm = T),
+      incr2 = mean(incr2, na.rm = T),
+      incr3 = mean(incr3, na.rm = T),
+      incr4 = mean(incr4, na.rm = T))
+odd_idx_dat12 = melt(subset(odd_idx_dat11, select = -c(pupil.1, pupil.2, pupil.3, pupil.4)),
+                     id.vars = c("Subject", "ACC", "span", "oddball", "bigspan"),
+                     measure.vars = c("incr2", "incr3", "incr4"))
+colnames(odd_idx_dat12) = c("Subject", "ACC", "span", "oddball", "bigspan", "item", "pupil")
+odd_idx_dat12$item = as.character(odd_idx_dat12$item)
+odd_idx_dat12$item[odd_idx_dat12$item == "incr2"] = "Item2"
+odd_idx_dat12$item[odd_idx_dat12$item == "incr3"] = "Item3"
+odd_idx_dat12$item[odd_idx_dat12$item == "incr4"] = "Item4"
+odd_idx_dat12$fill = "normal"
+odd_idx_dat12$fill[(odd_idx_dat12$oddball == "noSET-3" & odd_idx_dat12$item == "Item3") |
+                   (odd_idx_dat12$oddball == "noSET-4" & odd_idx_dat12$item == "Item4")] = "red"
+
+odd_idx_dat12b = melt(subset(odd_idx_dat10, select = -c(pupil.1, pupil.2, pupil.3, pupil.4)),
+                     id.vars = c("Subject", "ACC", "span", "oddball", "bigspan"),
+                     measure.vars = c("incr2", "incr3", "incr4"))
+colnames(odd_idx_dat12b) = c("Subject", "ACC", "span", "oddball", "bigspan", "item", "pupil")
+odd_idx_dat12b$item = as.character(odd_idx_dat12b$item)
+odd_idx_dat12b$item[odd_idx_dat12b$item == "incr2"] = "Item2"
+odd_idx_dat12b$item[odd_idx_dat12b$item == "incr3"] = "Item3"
+odd_idx_dat12b$item[odd_idx_dat12b$item == "incr4"] = "Item4"
+odd_idx_dat12b$fill = "normal"
+odd_idx_dat12b$fill[(odd_idx_dat12b$oddball == "noSET-3" & odd_idx_dat12b$item == "Item3") |
+                   (odd_idx_dat12b$oddball == "noSET-4" & odd_idx_dat12b$item == "Item4")] = "red"
+
+# Plots
+gg_incr234_odd_ACC1_span0 = ggplot(subset(odd_idx_dat12, ACC == "correct" & bigspan == "0span"), aes(oddball, pupil, fill = fill)) +
+  theme_bw() +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "bar") +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "pointrange") +
+  scale_fill_manual(values = c("grey", "red")) +
+  theme(legend.position = "none") +
+  coord_cartesian(y = c(-.01, .11)) +
+  labs(x = "", y = "IEPD (mm)") +
+  scale_x_discrete(labels = c("SET", "NoS3", "NoS4")) +
+  facet_grid( ~ item)
+gg_incr234_odd_ACC1_span123 = ggplot(subset(odd_idx_dat12, ACC == "correct" & bigspan == "123span"), aes(oddball, pupil, fill = fill)) +
+  theme_bw() +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "bar") +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "pointrange") +
+  scale_fill_manual(values = c("grey", "red")) +
+  theme(legend.position = "none") +
+  coord_cartesian(y = c(-.01, .11)) +
+  labs(x = "", y = "IEPD (mm)") +
+  scale_x_discrete(labels = c("SET", "NoS3", "NoS4")) +
+  facet_grid( ~ item)
+
+gg_incr234_odd_ACC0 = ggplot(subset(odd_idx_dat12, ACC == "incorrect"), aes(oddball, pupil, fill = fill)) +
+  theme_bw() +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "bar") +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "pointrange") +
+  scale_fill_manual(values = c("grey", "red")) +
+  theme(legend.position = "none") +
+  coord_cartesian(y = c(-.07, .16)) +
+  labs(x = "", y = "Dilation since previous item (mm)") +
+  facet_grid(bigspan ~ item)
+
+gg_incr234_odd_ACC1_span0_bw = gg_incr234_odd_ACC1_span0 +
+  scale_fill_grey()
+gg_incr234_odd_ACC1_span123_bw = gg_incr234_odd_ACC1_span123 +
+  scale_fill_grey()
+
+if (ggsave_figures) {
+  ggsave(plot = gg_incr234_odd_ACC1_span0_bw, paste(figure_dir, "/Figure4b0_.png", sep = ""), width = 4.5, height = 2.5)
+  ggsave(plot = gg_incr234_odd_ACC1_span123_bw, paste(figure_dir, "/Figure4b123_.png", sep = ""), width = 4.5, height = 2.5)
+}
+
+# t-tests
+odd_idx_dat12_wide = reshape(subset(odd_idx_dat12, ACC == "correct", select = -fill), v.names = "pupil", idvar = c("Subject", "span", "bigspan", "item"), timevar = "oddball", direction = "wide")
+odd_idx_dat12_wide$nS3_minus_SET = odd_idx_dat12_wide[,"pupil.noSET-3"] - odd_idx_dat12_wide[,"pupil.SET"]
+odd_idx_dat12_wide$nS4_minus_SET = odd_idx_dat12_wide[,"pupil.noSET-4"] - odd_idx_dat12_wide[,"pupil.SET"]
+odd_idx_dat12_wide_VOE3 = subset(odd_idx_dat12_wide, item == "Item3", select = -c(ACC, item, pupil.SET, `pupil.noSET-4`, nS4_minus_SET))
+odd_idx_dat12_wide_VOE4 = subset(odd_idx_dat12_wide, item == "Item4", select = -c(ACC, item, pupil.SET, `pupil.noSET-3`, nS3_minus_SET))
+odd_idx_dat13 = merge(odd_idx_dat12_wide_VOE3, odd_idx_dat12_wide_VOE4)
+odd_idx_dat13$IEPD_diff = with(odd_idx_dat13, `pupil.noSET-4` - `pupil.noSET-3`)
+odd_idx_dat13$VOE_diff = with(odd_idx_dat13, nS4_minus_SET - nS3_minus_SET)
+
+# IEPD rule-violating vs rule-congruent item (= VOE)
+(t_span0_item3_nS3 = t.test(subset(odd_idx_dat12_wide, item == "Item3" & span == "0span")$nS3_minus_SET))
+(t_span0_item4_nS4 = t.test(subset(odd_idx_dat12_wide, item == "Item4" & span == "0span")$nS4_minus_SET))
+(t_span123_item3_nS3 = t.test(subset(odd_idx_dat12_wide, item == "Item3" & span != "0span")$nS3_minus_SET))
+(t_span123_item4_nS4 = t.test(subset(odd_idx_dat12_wide, item == "Item4" & span != "0span")$nS4_minus_SET))
+# VOE item3 vs item4
+(t_span0_item3vs4_nS3 = t.test(subset(odd_idx_dat13, span == "0span")$IEPD_diff))
+(t_span0_item3vs4_nS3 = t.test(subset(odd_idx_dat13, span == "0span")$VOE_diff))
+(t_span123_item3vs4_nS3 = t.test(subset(odd_idx_dat13, span != "0span")$IEPD_diff))
+(t_span123_item3vs4_nS3 = t.test(subset(odd_idx_dat13, span != "0span")$VOE_diff))
+# IEPD item presented AFTER rule-violating item
+(t_span123_item4_nS3 = t.test(subset(odd_idx_dat12_wide, item == "Item4" & span != "0span")$nS3_minus_SET))
+(t_span0_item4_nS3 = t.test(subset(odd_idx_dat12_wide, item == "Item4" & span == "0span")$nS3_minus_SET))
+t.test(subset(odd_idx_dat12, ACC == "correct" & bigspan == "0span" & oddball == "noSET-3" & item == "Item4")$pupil)
+t.test(subset(odd_idx_dat12, ACC == "correct" & bigspan == "123span" & oddball == "noSET-3" & item == "Item4")$pupil)
+# Difference betwen 0-span and higher spans
+(t_span3_nS3_span0vs123 = t.test(pupil ~ bigspan, data = subset(odd_idx_dat12, ACC == "correct" & oddball == "noSET-3" & item == "Item3")))
+(t_span4_nS4_span0vs123 = t.test(pupil ~ bigspan, data = subset(odd_idx_dat12, ACC == "correct" & oddball == "noSET-4" & item == "Item4")))
+```
+
+
+## Splitting participants into linear and u-shaped
+
+```{r, echo = F, message = F, warning = F}
+### Identify the two groups
+# Prepare data frames
+subj_regression_long = data.frame(Subject = NA, effect = NA, bin = NA, beta = NA)[0,]
+row_l = 1
+subj_regression_wide = data.frame(Subject = NA, bin = NA, beta_lin = NA, beta_qua = NA)[0,]
+row_w = 1
+
+# Run regressions for each subject to find linear and quadratic contrasts
+if (preprocess_data) {
+  for (subj in unique(allfiles$Subject)) {
+    subj_dat = subset(allfiles,
+                      Subject == subj & ACC == 1 & bin_time >= 3 & bin_time <= 6, #& span != "0span" & set == "SET" 
+                      select = c("bin_time", "span", "TrialId", "rel_pupil"))
+    subj_dat$span = factor(as.character(subj_dat$span), levels = c("0span", "1span", "2span", "3span"))
+      
+    for (bin in unique(subj_dat$bin_time)) {   # this is data for items 3 and 4 only (3 <= unique(subj_dat$bin_time) <= 6)
+      bin_dat = subset(subj_dat, bin_time == bin)
+      
+      # Define contrasts
+      contrasts(bin_dat$span) = contr.poly(4) #(3)
+      
+      # Create baseline model and span model (with contrasts) and compare them
+      baselineModel = lm(rel_pupil ~ 1, data = bin_dat, na.action = na.omit)
+      spanModel = update(baselineModel, .~. + span)
+      
+      # Get the beta values for each contrast and add it to the dataframe pupildat_regression
+      beta_lin = spanModel$coefficients[2]
+      beta_qua = spanModel$coefficients[3]
+
+      subj_regression_long[row_l,]   = c(subj, "linear",    bin, beta_lin)
+      subj_regression_long[row_l+1,] = c(subj, "quadratic", bin, -beta_qua) #beta_ush
+      
+      subj_regression_wide[row_w,]    = c(subj, bin, beta_lin, -beta_qua)
+    
+      row_l = row_l + 2
+      row_w = row_w + 1
+    }
+  }
+  write.csv(subj_regression_long, "subj_regression_long.csv")
+  write.csv(subj_regression_wide, "subj_regression_wide.csv")
+} else {
+  subj_regression_long = read.csv("subj_regression_long.csv")
+  subj_regression_wide = read.csv("subj_regression_wide.csv")
+}
+
+# Fix regression data
+subj_regression_long$bin = as.numeric(as.character(subj_regression_long$bin))
+subj_regression_long$beta = as.numeric(as.character(subj_regression_long$beta))
+subj_regression_long$effect = factor(subj_regression_long$effect)
+subj_regression_long$Subject = factor(subj_regression_long$Subject)
+
+subj_regression_wide$bin = as.numeric(as.character(subj_regression_wide$bin))
+subj_regression_wide$beta_lin = as.numeric(as.character(subj_regression_wide$beta_lin))
+subj_regression_wide$beta_qua = as.numeric(as.character(subj_regression_wide$beta_qua))
+subj_regression_wide$Subject = factor(subj_regression_wide$Subject)
+
+# Find the difference between linear and quadratic beta weights
+subj_regression_wide$lin_minus_qua = with(subj_regression_wide, beta_lin - beta_qua)
+
+gg_overall_lin = ggplot(subj_regression_wide, aes(bin, beta_lin)) +
+  stat_summary(fun.y = mean, geom = "point") +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "pointrange")
+gg_overall_qua = ggplot(subj_regression_wide, aes(bin, beta_qua)) +
+  stat_summary(fun.y = mean, geom = "point") +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "pointrange")
+gg_overall_linminusqua = ggplot(subj_regression_wide, aes(bin, lin_minus_qua)) +
+  stat_summary(fun.y = mean, geom = "point") +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "pointrange")
+
+if (ggsave_figures) {
+  gg_overall = arrangeGrob(gg_overall_lin, gg_overall_qua, gg_overall_linminusqua, nrow = 3)
+  plot(gg_overall)
+  ggsave(paste(figure_dir, "/SFigure_gg_overall.png", sep = ""), gg_overall, width = 6, height = 8)
+}
+
+gg_hist_linminusqua = ggplot(subj_regression_wide, aes(lin_minus_qua)) +
+  geom_histogram()
+
+# Add participants to groups: Linear = Subjects whose pupil dilation is more linear on average; vice versa for u-shape
+gdat = ddply(subj_regression_wide, .(Subject), summarize,
+      beta_lin = mean(beta_lin, na.rm = T),
+      beta_qua = mean(beta_qua, na.rm = T),
+      lin_minus_qua = mean(lin_minus_qua, na.rm = T))
+gdat$ppg[gdat$lin_minus_qua > 0] = "linear"
+gdat$ppg[gdat$lin_minus_qua < 0] = "u-shape"
+
+numb_of_lin_subj = length(subset(gdat, ppg == "linear")$Subject)
+numb_of_qua_subj = length(subset(gdat, ppg == "u-shape")$Subject)
+
+# Write data to disk
+if (preprocess_data) {
+  write.csv(gdat, "gdat.csv", row.names = F)
+} else {
+  gdat = read.csv("gdat.csv")
+}
+```
+
+Subjects in linear group (`r length(subset(gdat, ppg == "linear")$Subject)`): `r subset(gdat, ppg == "linear")$Subject`
+
+Subjects in inverse-U group (`r length(subset(gdat, ppg == "u-shape")$Subject)`): `r subset(gdat, ppg == "u-shape")$Subject`
+
+
+### Pupil dilation for linear and u-shaped groups
+
+``` {r, echo = F, message = F, warning = F}
+# Prepare data
+pupil_ACC1_SET_g = merge(gdat,
+                         subset(pupildat, ACC == 1, select = c("Subject", "span", "oddball", "rel.time", "rel.pupil")),
+                         by = c("Subject"))
+pupil_ACC1_SET_g$ppg = factor(pupil_ACC1_SET_g$ppg)
+
+subjwise_perf_g = merge(gdat,
+                        subset(subjwise_perf_oddball, ACC == 1 & oddball == "SET", select = c("Subject", "span", "oddball", "RT", "ACC")),
+                        by = c("Subject"))
+subjwise_perf_g$ppg = factor(subjwise_perf_g$ppg)
+
+### Span pupil dilation
+# Plot SETs only
+gg_ppg = ggplot(subset(pupil_ACC1_SET_g, !is.na(ppg) & oddball == "SET"), aes(rel.time, rel.pupil, color = span, fill = span)) +
+  geom_tile(data = tile_data, aes(x = x, y = y, width = width, height = height), inherit.aes = F, fill = "white") +
+  geom_vline(xintercept = response_prompt_time, size = 1.5) +
+  geom_text(data = tile_data, aes(x = x, y = -0.06, label = labels), inherit.aes = F) +
+  geom_text(data = resp_fix_labels, aes(x = x, y = -0.06, label = label), inherit.aes = F) +
+  labs(x = 'Time (s)', y = 'Pupil dilation (mm)', color = ' ', fill = ' ') +
+  theme(legend.position = c(.95, .8), legend.background = element_rect(fill = "transparent")) +
+  scale_x_continuous(breaks = seq(0, 9, 1.5)) +
+  facet_grid( ~ ppg)
+gg_ppg = gg_ppg +
+  stat_summary(fun.y = mean, geom = 'point') +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = 'smooth', alpha = 0.2) +
+  scale_color_brewer(palette = "RdYlBu") +
+  scale_fill_brewer(palette = "RdYlBu")
+
+### Add response times
+RT_data = ddply(subjwise_perf_g, .(oddball, span, ppg), summarize,
+                RT_mean = mean.cl.boot(RT, B = 2000, tr = .1)[1],
+                RT_lower = mean.cl.boot(RT, B = 2000, tr = .1)[2],
+                RT_upper = mean.cl.boot(RT, B = 2000, tr = .1)[3])
+RT_data$RT_mean = 6 + RT_data$RT_mean/1000
+RT_data$RT_lower = 6 + RT_data$RT_lower/1000
+RT_data$RT_upper = 6 + RT_data$RT_upper/1000
+# Location of RTs in plot
+rtbox = -.022
+dist = .006
+RT_data$y = c(rep(rtbox-3*dist, 2),
+              rep(rtbox-2*dist, 2),
+              rep(rtbox-dist, 2),
+              rep(rtbox, 2))
+RT_data_long = melt(RT_data, id.vars = c("span", "oddball", "ppg", "y"))
+# Add RTs and box around RTs to the plot
+gg_ppg = gg_ppg +
+  geom_point(data = RT_data, aes(x = RT_mean, y = y, color = span), inherit.aes = F) +
+  geom_line(data = subset(RT_data_long, variable %in% c("RT_lower", "RT_upper")), aes(x = value, y = y)) +
+  geom_rect(aes(xmin = 6, xmax = 7, ymin = (rtbox - 4*dist), ymax = rtbox + dist), color = "black", fill = "transparent", inherit.aes = F)
+
+# Inlay: Bar plots for Item4 only
+Item4_pupils = ddply(subset(pupil_ACC1_SET_g, !is.na(ppg) & oddball == "SET" & rel.time >= 5.5 & rel.time <= 6),
+                     .(Subject, lin_minus_qua, ppg, span, oddball),
+                     summarize,
+                     mean_pupil = mean(rel.pupil, na.rm = T))
+
+gg_Item4_inlay = ggplot(Item4_pupils, aes(span, mean_pupil, fill = span)) +
+  theme_bw() +
+  stat_summary(fun.y = "mean", geom = "bar") +
+  stat_summary(fun.data = "mean_cl_normal", geom = "pointrange", fun.args = list(mult = 1)) +
+  scale_fill_brewer(palette = "RdYlBu") +
+  labs(x = "", y = "Pupil dilation Item4") +
+  theme(legend.position = "none") +
+  facet_grid(~ ppg)
+
+# Plot SETs and noSETs
+gg_ppg2 = ggplot(subset(pupil_ACC1_SET_g, !is.na(ppg)), aes(rel.time, rel.pupil, color = span, fill = span)) +
+  geom_tile(data = tile_data, aes(x = x, y = y, width = width, height = height), inherit.aes = F, fill = "white") +
+  geom_vline(xintercept = response_prompt_time, size = 1.5) +
+  geom_text(data = tile_data, aes(x = x, y = -0.03, label = labels), inherit.aes = F) +
+  geom_text(data = resp_fix_labels, aes(x = x, y = y, label = label), inherit.aes = F) +
+  labs(x = 'Time (s)', y = 'Pupil dilation (mm)', color = ' ', fill = ' ') +
+  theme(legend.position = c(.4, .95), legend.background = element_rect(fill = "transparent")) +
+  scale_x_continuous(breaks = seq(0, 9, 1.5)) +
+  stat_summary(fun.y = mean, geom = 'point') +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = 'smooth', alpha = 0.2) +
+  scale_color_brewer(palette = "RdYlBu") +
+  scale_fill_brewer(palette = "RdYlBu") +
+  # scale_color_manual(values = span_colors(4)) +
+  # scale_fill_manual(values = span_colors(4)) +
+  facet_grid(oddball ~ ppg)
+
+if (ggsave_figures) {
+  plot(gg_ppg)
+  ggsave(plot = gg_ppg, paste(figure_dir, "/Figure5_ppg.png", sep = ""), width = 6, height = 3.5)
+  plot(gg_Item4_inlay)
+  ggsave(plot = gg_Item4_inlay, paste(figure_dir, "/Figure5_Item4_inlay.png", sep = ""), width = 3, height = 2.5)
+  plot(gg_ppg2)
+  ggsave(plot = gg_ppg2, paste(figure_dir, "/Figure5_ppg2.png", sep = ""), width = 9, height = 12)
+}
+
+### Oddball pupil dilation
+gg_ppg_odd = ggplot(subset(pupil_ACC1_SET_g, !is.na(ppg) & span != "0span"), aes(rel.time, rel.pupil, color = oddball, fill = oddball)) +
+  geom_tile(data = tile_data, aes(x = x, y = y, width = width, height = height), inherit.aes = F, fill = "white") +
+  geom_vline(xintercept = response_prompt_time, size = 1.5) +
+  geom_text(data = tile_data, aes(x = x, y = -0.03, label = labels), inherit.aes = F) +
+  geom_text(data = resp_fix_labels, aes(x = x, y = y, label = label), inherit.aes = F) +
+  labs(x = 'Time (s)', y = 'Pupil dilation (mm)', color = ' ', fill = ' ') +
+  theme(legend.position = c(.05, .8), legend.background = element_rect(fill = "transparent")) +
+  scale_x_continuous(breaks = seq(0, 9, 1.5)) +
+  facet_grid( ~ ppg)
+gg_ppg_odd = gg_ppg_odd +
+  stat_summary(fun.y = mean, geom = 'point') +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = 'smooth', alpha = 0.2) +
+  scale_color_manual(values = oddball_colors) +
+  scale_fill_manual(values = oddball_colors)
+
+if (ggsave_figures) {
+  plot(gg_ppg_odd)
+  ggsave(plot = gg_ppg_odd, paste(figure_dir, "/Figure5_ppg_odd.png", sep = ""), width = 7, height = 5)
+}
+```
+
+#### Regression weights for pupil dilation by span
+
+```{r, echo = F, wearning = F, message = F}
+# Prepare data frames
+allfiles = merge(allfiles, subset(gdat, select = c("Subject", "ppg")))
+odd_regression_long = data.frame(ppg = NA, oddball = NA, effect = NA, bin = NA, beta = NA, t = NA, p = NA, sig = NA)[0,]
+odd_regression_long_comp = data.frame(oddball = NA, effect = NA, bin = NA, beta = NA, p = NA, sig = NA)[0,]
+rowi = 1
+rowj = 1
+
+# Run regressions for each subject to find linear and quadratic contrasts
+if (preprocess_data) {
+  
+  for (odd in unique(allfiles$oddball)) {
+    for (bin in unique(allfiles$bin_time)) {
+      
+      ### Compare linear and inverse-U, using regression 
+        bin_dat = subset(allfiles, oddball == odd & bin_time == bin & ACC == 1, select = c("Subject", "bin_time", "span", "TrialId", "rel_pupil", "ppg"))
+          
+        # Define contrasts
+        contrasts(bin_dat$span) = contr.poly(4)
+        contrasts(bin_dat$ppg) = c(-1,1)
+        
+        # Create baseline model and span model (with contrasts) and compare them
+        baselineModel = lme(rel_pupil ~ 1, random = ~1|Subject/span, data = bin_dat, method = "ML", na.action = na.omit)
+        spanModel = update(baselineModel, .~. + span * ppg)
+        
+        # Get the beta values for each contrast and add it to the dataframe
+        beta_ppg = summary(spanModel)$tTable[5]
+        beta_pL  = summary(spanModel)$tTable[6]
+        beta_pQ  = summary(spanModel)$tTable[7]
+        p_ppg    = summary(spanModel)$tTable[37]
+        p_pL     = summary(spanModel)$tTable[38]
+        p_pQ     = summary(spanModel)$tTable[39]
+        sig_ppg  = "ns."; if (p_ppg <= 0.05) {sig_ppg = "sig."}
+        sig_pL   = "ns."; if (p_pL <= 0.05) {sig_pL = "sig."}
+        sig_pQ   = "ns."; if (p_pQ <= 0.05) {sig_pQ = "sig."}
+  
+        # Save the values into the datarame
+        odd_regression_long_comp[rowi,]   = c(odd, "main_ppg",  bin, beta_ppg, p_ppg, sig_ppg)
+        odd_regression_long_comp[rowi+1,] = c(odd, "int_ppg_L", bin, beta_pL,  p_pL,  sig_pL)
+        odd_regression_long_comp[rowi+2,] = c(odd, "int_ppg_Q", bin, beta_pQ,  p_pQ,  sig_pQ)
+        
+        rowi = rowi + 3
+        
+      for (ppgi in unique(allfiles$ppg)) {
+        
+      ### Characterize linear and inverse-U separately, using regression 
+        bin_dat = subset(allfiles, ppg == ppgi & oddball == odd & bin_time == bin & ACC == 1, select = c("Subject", "bin_time", "span", "TrialId", "rel_pupil"))
+          
+        # Define contrasts
+        contrasts(bin_dat$span) = contr.poly(4)
+        
+        # Create baseline model and span model (with contrasts) and compare them
+        baselineModel = lme(rel_pupil ~ 1, random = ~1|Subject/span, data = bin_dat, method = "ML", na.action = na.omit)
+        spanModel = update(baselineModel, .~. + span)
+        
+        # Get the beta values for each contrast and add it to the dataframe
+        beta_lin = summary(spanModel)$tTable[2]
+        beta_qua = summary(spanModel)$tTable[3]
+        se_lin   = summary(spanModel)$tTable[6]
+        se_qua   = summary(spanModel)$tTable[7]
+        t_lin    = summary(spanModel)$tTable[14]
+        t_qua    = summary(spanModel)$tTable[15]
+        p_lin    = summary(spanModel)$tTable[18]
+        p_qua    = summary(spanModel)$tTable[19]
+        sig_lin  = "ns."; if (p_lin <= 0.05) {sig_lin = "sig."}
+        sig_qua  = "ns."; if (p_qua <= 0.05) {sig_qua = "sig."}
+  
+        # Save the values into the datarame
+        odd_regression_long[rowj,]   = c(ppgi, odd, "linear",    bin,  beta_lin, t_lin, p_lin, sig_lin)
+        odd_regression_long[rowj+1,] = c(ppgi, odd, "quadratic", bin, -beta_qua, t_qua, p_qua, sig_qua)
+        
+        rowj = rowj + 2
+      }
+    }
+  }
+  write.csv(odd_regression_long, "odd_regression_long.csv")
+  write.csv(odd_regression_long_comp, "odd_regression_long_comp.csv")
+} else {
+  odd_regression_long = read.csv("odd_regression_long.csv")
+  odd_regression_long_comp = read.csv("odd_regression_long_comp.csv")
+}
+
+# Fix regression data
+odd_regression_long$bin = as.numeric(as.character(odd_regression_long$bin))
+odd_regression_long$beta = as.numeric(as.character(odd_regression_long$beta))
+odd_regression_long$t = as.numeric(as.character(odd_regression_long$t))
+odd_regression_long$effect = factor(odd_regression_long$effect)
+odd_regression_long$oddball = factor(odd_regression_long$oddball, levels = c("SET", "noSET-3", "noSET-4"))
+odd_regression_long$ppg = factor(odd_regression_long$ppg)
+odd_regression_long$alpha = as.numeric(as.character(factor(odd_regression_long$sig, labels = c(0.5, 0.9))))
+
+odd_regression_long_comp$bin = as.numeric(as.character(odd_regression_long_comp$bin))
+odd_regression_long_comp$beta = as.numeric(as.character(odd_regression_long_comp$beta))
+odd_regression_long_comp$effect = factor(odd_regression_long_comp$effect)
+odd_regression_long_comp$oddball = factor(odd_regression_long_comp$oddball, levels = c("SET", "noSET-3", "noSET-4"))
+odd_regression_long_comp$alpha = as.numeric(as.character(factor(odd_regression_long_comp$sig, labels = c(0.5, 0.9))))
+
+# Plot comparison between linear and inverse-U
+gg_linqua_diffs_beta = ggplot(subset(odd_regression_long_comp, oddball == "SET"), aes(bin, -beta, color = effect, alpha = alpha)) +
+  geom_tile(data = tile_data, aes(x = x, y = y, width = width, height = height), inherit.aes = F, fill = "white") +
+  geom_vline(xintercept = response_prompt_time, size = 1.5) +
+  geom_hline(yintercept = 0, color = "grey") +
+  geom_text(data = tile_data, aes(x = x, y = -0.003, label = labels), inherit.aes = F) +
+  geom_text(data = resp_fix_labels, aes(x = x, y = -0.003, label = label), inherit.aes = F) +
+  geom_point() +
+  geom_line() +
+  facet_grid(~ oddball)
+
+# Plot linear and inverse-U pupil dialtino
+gg_pupil_linqua_SET_beta = ggplot(subset(odd_regression_long, oddball == "SET"), aes(bin, beta, color = effect, group = effect, alpha = alpha)) +
+  geom_tile(data = tile_data, aes(x = x, y = y, width = width, height = height), inherit.aes = F, fill = "white") +
+  geom_vline(xintercept = response_prompt_time, size = 1.5) +
+  geom_hline(yintercept = 0, color = "grey") +
+  geom_text(data = tile_data, aes(x = x, y = -0.03, label = labels), inherit.aes = F) +
+  geom_text(data = resp_fix_labels, aes(x = x, y = y, label = label), inherit.aes = F) +
+  geom_point() +
+  geom_line() +
+  # scale_shape_manual(values = c(1, 16)) +
+  theme(legend.position = "none") + #c(.05, .9), legend.background = element_rect(fill = "transparent")) +
+  facet_grid(ppg ~ oddball)
+gg_pupil_linqua_SET_t = ggplot(odd_regression_long, aes(bin, t, color = effect, group = effect, alpha = alpha)) +
+  geom_tile(data = tile_data, aes(x = x, y = y, width = width, height = height), inherit.aes = F, fill = "white") +
+  geom_vline(xintercept = response_prompt_time, size = 1.5) +
+  geom_hline(yintercept = 0, color = "grey") +
+  geom_hline(yintercept = c(1.67, -1.67), color = "black") +
+  geom_text(data = tile_data, aes(x = x, y = -0.03, label = labels), inherit.aes = F) +
+  geom_text(data = resp_fix_labels, aes(x = x, y = y, label = label), inherit.aes = F) +
+  geom_point() +
+  geom_line() +
+  theme(legend.position = c(.1, .5)) +
+  facet_grid(ppg ~ oddball)
+
+if (ggsave_figures) {
+  plot(gg_pupil_linqua_SET_beta)
+  ggsave(plot = gg_pupil_linqua_SET_beta, paste(figure_dir, "/Figure5_ppg_inlet_beta.png", sep = ""), width = 12, height = 7)
+  plot(gg_pupil_linqua_SET_t)
+  ggsave(plot = gg_pupil_linqua_SET_t, paste(figure_dir, "/Figure5_ppg_inlet_t.png", sep = ""), width = 12, height = 7)
+  ggsave(plot = gg_linqua_diffs_beta, file.path(figure_dir, "Figure5S_ppg_comparison.png"), width = 4, height = 3)
+}
+```
+
+#### t-values for pupil dilation by oddball
+
+```{r, echo = F, message = F, warning = F}
+if (preprocess_data) {
+    
+  # Prepare data frame
+  oddpupildat_ttests_ppg = data.frame(ppg = NA, bigspan = NA, effect = NA, rel.time = NA, df = NA, t = NA, p = NA, ci_l = NA, ci_u = NA, sig = NA)[0,]
+  row = 1
+
+  for (ppgi in unique(allfiles$ppg)) {
+    for (bigspa in unique(allfiles$bigspan)) {
+      for (bin in unique(allfiles$bin_time)) {
+      
+      # Prepare data
+      bin_dat = subset(allfiles, ppg == ppgi & bigspan == bigspa & bin_time == bin & ACC == 1, select = c("Subject", "oddball", "span", "rel_pupil"))
+
+      # Repeated-measures t-tests
+      av_bin_dat = ddply(bin_dat, .(Subject, oddball, span), summarize,
+                         rel_pupil = median(rel_pupil, na.rm = T))
+      av_bin_dat_wide = reshape(av_bin_dat, v.names = "rel_pupil", idvar = c("Subject", "span"), timevar = "oddball", direction = "wide")
+      av_bin_dat_wide$pupil_nS3 = av_bin_dat_wide[,"rel_pupil.noSET-3"] - av_bin_dat_wide[,"rel_pupil.SET"]
+      av_bin_dat_wide$pupil_nS4 = av_bin_dat_wide[,"rel_pupil.noSET-4"] - av_bin_dat_wide[,"rel_pupil.SET"]
+      
+      # Only run the t-tests if there are more than 3 valid observations
+      if (sum(!is.na(av_bin_dat_wide$pupil_nS3)) > 3) {
+        ttest_nS3 = with(av_bin_dat_wide, t.test(pupil_nS3))
+      } else {
+        ttest_nS3$statistic = ttest_nS3$parameter = ttest_nS3$conf.int = NA; ttest_nS3$p.value = 0
+      }
+      if (sum(!is.na(av_bin_dat_wide$pupil_nS4)) > 3) {
+        ttest_nS4 = with(av_bin_dat_wide, t.test(pupil_nS4))
+      } else {
+        ttest_nS4$statistic = ttest_nS4$parameter = ttest_nS4$conf.int = NA; ttest_nS4$p.value = 0
+      }
+      
+      t3  = ttest_nS3$statistic
+      df3 = ttest_nS3$parameter
+      p3  = ttest_nS3$p.value
+      ci3 = ttest_nS3$conf.int
+      t4  = ttest_nS4$statistic
+      df4 = ttest_nS4$parameter
+      p4  = ttest_nS4$p.value
+      ci4 = ttest_nS4$conf.int
+      sig_nS3 = "ns."; if (p3 <= 0.05) {sig_nS3 = "sig."}
+      sig_nS4 = "ns."; if (p4 <= 0.05) {sig_nS4 = "sig."}
+      
+      # Save results
+      oddpupildat_ttests_ppg[row,]   = c(ppgi, bigspa, "noSET-3 vs SET", bin, df3, t3, p3, ci3, sig_nS3)
+      oddpupildat_ttests_ppg[row+1,] = c(ppgi, bigspa, "noSET-4 vs SET", bin, df4, t4, p4, ci4, sig_nS4)
+      
+      ### Move into the next row of the dataframe
+      row = row + 2
+      }
+    }
+  }
+  write.csv(oddpupildat_ttests_ppg, "oddpupildat_ttests_ppg.csv", row.names = F)
+} else {
+  oddpupildat_ttests_ppg = read.csv("oddpupildat_ttests_ppg.csv")
+}
+
+# Fix dataframe
+oddpupildat_ttests_ppg$rel.time = as.numeric(oddpupildat_ttests_ppg$rel.time)
+oddpupildat_ttests_ppg$df = as.numeric(oddpupildat_ttests_ppg$df)
+oddpupildat_ttests_ppg$t = as.numeric(oddpupildat_ttests_ppg$t)
+oddpupildat_ttests_ppg$p = as.numeric(oddpupildat_ttests_ppg$p)
+oddpupildat_ttests_ppg$ci_l = as.numeric(oddpupildat_ttests_ppg$ci_l)
+oddpupildat_ttests_ppg$ci_u = as.numeric(oddpupildat_ttests_ppg$ci_u)
+oddpupildat_ttests_ppg$ppg = factor(oddpupildat_ttests_ppg$ppg)
+crit_t_value = qt(0.95, 60)
+oddpupildat_ttests_ppg$sig = as.numeric(as.character(factor(oddpupildat_ttests_ppg$t >= crit_t_value | oddpupildat_ttests_ppg$t <= -crit_t_value, labels = c(1, 0)))) # must be numeric for scale_alpha to handle it
+
+### Plots
+# t-values
+pupil_effect_plot_ttests_linqua = ggplot(subset(oddpupildat_ttests_ppg, rel.time > 0.2),
+                                  aes(rel.time, t, color = effect, group = effect)) +#, alpha = sig
+  geom_tile(data = tile_data, aes(x = x, y = y, width = width, height = height), inherit.aes = F, fill = "white") +
+  geom_vline(xintercept = response_prompt_time, size = 1.5) +
+  geom_hline(yintercept = c(0, crit_t_value, -crit_t_value), color = "grey") +
+  # geom_text(data = tile_data, aes(x = x, y = -0.03, label = labels), inherit.aes = F) +
+  # geom_text(data = resp_fix_labels, aes(x = x, y = y, label = label), inherit.aes = F) +
+  geom_point() +
+  geom_line() +
+  # geom_errorbar(aes(x = rel.time, ymin = ci_l, ymax = ci_u)) +
+  scale_color_manual(values = oddball_colors[2:3]) +
+  # scale_alpha(range = c(1, .2)) +
+  theme(legend.position = "none") +
+  facet_grid(ppg ~ bigspan)
+
+if (ggsave_figures) {
+  plot(pupil_effect_plot_ttests_linqua)
+  ggsave(plot = pupil_effect_plot_ttests_linqua, paste(figure_dir, "/Figure8inlet_.png", sep = ""), width = 10, height = 5)
+}
+```
+
+### Increase in pupil dilation from one item to the next
+
+```{r, echo = F, message = F, warning = F}
+### Oddball pupil dilation by item (NEW VOE = raw noSET minus SET dilation)
+# Prepare data
+odd_idx_dat_SnS = melt(subset(odd_idx_dat11, select = -c(incr2, incr3, incr4)),
+                     id.vars = c("Subject", "ACC", "span", "oddball", "bigspan"),
+                     measure.vars = c("pupil.1", "pupil.2", "pupil.3", "pupil.4"))
+odd_idx_dat_SnS2 = reshape(subset(odd_idx_dat_SnS, ACC == "correct", select = -ACC), idvar = c("Subject", "span", "bigspan", "variable"), timevar = "oddball", direction = "wide")
+odd_idx_dat_SnS2$VOE3 = with(odd_idx_dat_SnS2, `value.noSET-3` - value.SET)
+odd_idx_dat_SnS2$VOE4 = with(odd_idx_dat_SnS2, `value.noSET-4` - value.SET)
+odd_idx_dat_SnS3 = melt(subset(odd_idx_dat_SnS2, select = -c(value.SET, `value.noSET-3`, `value.noSET-4`)),
+                        id.vars = c("Subject", "span", "bigspan", "variable"),
+                        measure.vars = c("VOE3", "VOE4"))
+colnames(odd_idx_dat_SnS3)[colnames(odd_idx_dat_SnS3) == "variable"] = c("item", "VOEitem")
+odd_idx_dat_SnS4 = subset(odd_idx_dat_SnS3, (item == "pupil.3" & VOEitem == "VOE3") | (item == "pupil.4" & VOEitem == "VOE4"))
+odd_idx_dat_SnS5 = merge(gdat, odd_idx_dat_SnS4, by = "Subject")
+
+# Plot
+gg_VOE = ggplot(odd_idx_dat_SnS5, aes(span, value, color = ppg, shape = ppg, group = ppg)) +
+  theme_bw() +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "pointrange") +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "line") +
+  theme(legend.position = "none") +
+  labs(x = "", y = "VOE") +
+  scale_color_manual(values = bw_colors)
+gg_VOE_I34 = gg_VOE +
+  facet_grid(~ VOEitem)
+
+if (ggsave_figures) {
+  plot(gg_VOE)
+  plot(gg_VOE_I34)
+  ggsave(plot = gg_VOE, paste(figure_dir, "/Figure7_VOE_.png", sep = ""), width = 3, height = 4)
+  ggsave(plot = gg_VOE_I3, paste(figure_dir, "/Figure7_VOE_I34_.png", sep = ""), width = 3, height = 4)
+}
+  
+# Test
+contrasts(odd_idx_dat_SnS5$span) = contr.poly(4)
+nS_VOE_linear = lme(value ~ span, random = ~1|Subject/span/VOEitem, na.action = na.omit, method = "ML", data = subset(odd_idx_dat_SnS5, ppg == "linear"))
+summary(nS_VOE_linear)
+nS_VOE_ushape = lme(value ~ span, random = ~1|Subject/span/VOEitem, na.action = na.omit, method = "ML", data = subset(odd_idx_dat_SnS5, ppg == "u-shape"))
+summary(nS_VOE_ushape)
+nS_VOE_both = lme(value ~ span * ppg, random = ~1|Subject/span/VOEitem, na.action = na.omit, method = "ML", data = odd_idx_dat_SnS5)
+summary(nS_VOE_both)
+anova(nS_VOE_both, type = 'sequential')
+
+  
+### Oddball pupil dilation by item (OLD VOE = noSET minus SET IEPD)
+odd_idx_dat13 = merge(odd_idx_dat12, gdat, by = c("Subject"))
+
+gg_incr234_odd_lin_0span = ggplot(subset(odd_idx_dat13, ppg == "linear" & ACC == "correct" & item != "Item2" & bigspan == "0span"), aes(oddball, pupil, fill = fill)) +
+  theme_bw() +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "bar") +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "pointrange") +
+  scale_fill_manual(values = c("grey", "red")) +
+  theme(legend.position = "none") +
+  coord_cartesian(y = c(-.04, .13)) +
+  labs(x = "", y = "Dilation increase from previous item") +
+  facet_grid(bigspan ~ item)
+gg_incr234_odd_lin_123span = ggplot(subset(odd_idx_dat13, ppg == "linear" & ACC == "correct" & item != "Item2" & bigspan == "123span"), aes(oddball, pupil, fill = fill)) +
+  theme_bw() +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "bar") +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "pointrange") +
+  scale_fill_manual(values = c("grey", "red")) +
+  theme(legend.position = "none") +
+  coord_cartesian(y = c(-.04, .13)) +
+  labs(x = "", y = "Dilation increase from previous item") +
+  facet_grid(bigspan ~ item)
+gg_incr234_odd_qua_0span = ggplot(subset(odd_idx_dat13, ppg == "u-shape" & ACC == "correct" & item != "Item2" & bigspan == "0span"), aes(oddball, pupil, fill = fill)) +
+  theme_bw() +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "bar") +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "pointrange") +
+  scale_fill_manual(values = c("grey", "red")) +
+  theme(legend.position = "none") +
+  coord_cartesian(y = c(-.04, .13)) +
+  labs(x = "", y = "Dilation increase from previous item") +
+  facet_grid(bigspan ~ item)
+gg_incr234_odd_qua_123span = ggplot(subset(odd_idx_dat13, ppg == "u-shape" & ACC == "correct" & item != "Item2" & bigspan == "123span"), aes(oddball, pupil, fill = fill)) +
+  theme_bw() +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "bar") +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "pointrange") +
+  scale_fill_manual(values = c("grey", "red")) +
+  theme(legend.position = "none") +
+  coord_cartesian(y = c(-.04, .13)) +
+  labs(x = "", y = "Dilation increase from previous item") +
+  facet_grid(bigspan ~ item)
+
+gg_incr234_odd_lin2 = ggplot(subset(odd_idx_dat13, ppg == "linear" & ACC == "correct" & item != "Item2"), aes(oddball, pupil, fill = fill)) +
+  theme_bw() +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "bar") +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "pointrange") +
+  scale_fill_manual(values = c("grey", "red")) +
+  theme(legend.position = "none") +
+  coord_cartesian(y = c(-.04, .13)) +
+  labs(x = "", y = "Dilation increase from previous item") +
+  facet_grid(item ~ span)
+gg_incr234_odd_qua2 = ggplot(subset(odd_idx_dat13, ppg == "u-shape" & ACC == "correct" & item != "Item2"), aes(oddball, pupil, fill = fill)) +
+  theme_bw() +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "bar") +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "pointrange") +
+  scale_fill_manual(values = c("grey", "red")) +
+  theme(legend.position = "none") +
+  coord_cartesian(y = c(-.04, .13)) +
+  labs(x = "", y = "Dilation increase from previous item") +
+  facet_grid(item ~ span)
+
+### New plots (difference between rule-violating and rule-congruent VOE directly)
+# Prepare data
+VOE_diff_dat = merge(subset(odd_idx_dat12_wide, ACC == "correct" & item %in% c("Item3", "Item4")), gdat)
+VOE_diff_dat$item = factor(VOE_diff_dat$item)
+VOE_diff_dat$nS_minus_SET = VOE_diff_dat$nS3_minus_SET
+VOE_diff_dat$nS_minus_SET[VOE_diff_dat$item == "Item4"] = VOE_diff_dat$nS4_minus_SET[VOE_diff_dat$item == "Item4"]
+VOE_diff_dat_mean = ddply(VOE_diff_dat,
+                          .(Subject, span, ppg),
+                          summarize,
+                          nS_minus_SET = mean(nS_minus_SET, na.rm = T))
+# Plot
+agostino.test(VOE_diff_dat_mean$nS_minus_SET)
+gg_VOE_I34 = ggplot(VOE_diff_dat_mean, aes(span, nS_minus_SET, color = ppg, group = ppg, shape = ppg)) +
+  theme_bw() +
+  stat_summary(fun.data = "mean_cl_normal", geom = "pointrange", fun.args = list(mult = 1)) +
+  stat_summary(fun.data = "mean_cl_normal", geom = "line", fun.args = list(mult = 1)) +
+  labs(x = "", y = "Pupillary VOE (mm)") +
+  scale_x_discrete(labels = c("0sp", "1sp", "2sp", "3sp")) +
+  theme(legend.position = "none") +
+  scale_colour_manual(values = bw_colors)
+gg_VOE_I3 = ggplot(subset(VOE_diff_dat, item == "Item3"), aes(span, nS3_minus_SET, color = ppg, group = ppg)) +
+  theme_bw() +
+  stat_summary(fun.data = "mean_cl_normal", geom = "pointrange", fun.args = list(mult = 1)) +
+  stat_summary(fun.data = "mean_cl_normal", geom = "line", fun.args = list(mult = 1)) +
+  labs(x = "", y = "Pupillary VOE (mm)") +
+  theme(legend.position = "none") +
+  scale_colour_grey()
+gg_VOE_I4 = ggplot(subset(VOE_diff_dat, item == "Item4"), aes(span, nS4_minus_SET, color = ppg, group = ppg)) +
+  theme_bw() +
+  stat_summary(fun.data = "mean_cl_normal", geom = "pointrange", fun.args = list(mult = 1)) +
+  stat_summary(fun.data = "mean_cl_normal", geom = "line", fun.args = list(mult = 1)) +
+  labs(x = "", y = "Pupillary VOE (mm)") +
+  theme(legend.position = "none") +
+  scale_colour_grey()
+gg_irrelevance_I4 = ggplot(subset(VOE_diff_dat, item == "Item4"), aes(span, nS3_minus_SET, color = ppg, group = ppg)) +
+  theme_bw() +
+  stat_summary(fun.data = "mean_cl_normal", geom = "pointrange", fun.args = list(mult = 1)) +
+  stat_summary(fun.data = "mean_cl_normal", geom = "line", fun.args = list(mult = 1)) +
+  labs(x = "", y = "Pupillary VOE (mm)") +
+  theme(legend.position = "none") +
+  scale_colour_grey()
+
+###
+gg_incr234_odd = ggplot(subset(odd_idx_dat13, ACC == "correct" & item != "Item2"), aes(oddball, pupil, fill = fill)) +
+  theme_bw() +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "bar") +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "pointrange") +
+  scale_fill_manual(values = c("grey", "red")) +
+  theme(legend.position = "none") +
+  coord_cartesian(y = c(-.1, .13)) +
+  labs(x = "", y = "Dilation increase since previous item") +
+  facet_grid(span ~ item) #~ ppg
+
+if (ggsave_figures) {
+  gg_incr234_odd_lin = arrangeGrob(gg_incr234_odd_lin_0span, gg_incr234_odd_lin_123span, ncol = 2)
+  gg_incr234_odd_qua = arrangeGrob(gg_incr234_odd_qua_0span, gg_incr234_odd_qua_123span, ncol = 2)
+  gg_incr234_odd_linqua = arrangeGrob(gg_incr234_odd_lin, gg_incr234_odd_qua, ncol = 1)
+  plot(gg_incr234_odd_linqua)
+  ggsave(plot = gg_incr234_odd_linqua, paste(figure_dir, "/Figure5b_.png", sep = ""), width = 12, height = 7)
+  plot(gg_incr234_odd_lin2)
+  ggsave(plot = gg_incr234_odd_lin2, paste(figure_dir, "/Figure7lin_.png", sep = ""), width = 12, height = 7)
+  plot(gg_incr234_odd_qua2)
+  ggsave(plot = gg_incr234_odd_qua2, paste(figure_dir, "/Figure7qua_.png", sep = ""), width = 12, height = 7)
+  plot(gg_incr234_odd)
+  ggsave(plot = gg_incr234_odd, paste(figure_dir, "/Figure4b2_.png", sep = ""), width = 7, height = 12)
+  plot(gg_VOE_I3)
+  ggsave(plot = gg_VOE_I3, paste(figure_dir, "/Figure7_I3_.png", sep = ""), width = 3, height = 4)
+  plot(gg_VOE_I4)
+  ggsave(plot = gg_VOE_I4, paste(figure_dir, "/Figure7_I4_.png", sep = ""), width = 3, height = 4)
+  plot(gg_VOE_I34)
+  ggsave(plot = gg_VOE_I34, paste(figure_dir, "/Figure7_I34_.png", sep = ""), width = one_by_one$width, height = one_by_one$height)
+  plot(gg_irrelevance_I4)
+  ggsave(plot = gg_irrelevance_I4, paste(figure_dir, "/Figure7_I4_irrelevance_.png", sep = ""), width = 3, height = 4)
+}
+
+## There is NO correlation between VOE and task performance
+odd_idx_dat_SnS5$oddball = NA
+odd_idx_dat_SnS5$oddball[odd_idx_dat_SnS5$VOEitem == "VOE3"] = "noSET-3"
+odd_idx_dat_SnS5$oddball[odd_idx_dat_SnS5$VOEitem == "VOE4"] = "noSET-4"
+subjwise_perf_g2 = merge(subset(subjwise_perf_oddball, oddball != "SET"),
+                         subset(odd_idx_dat_SnS5, select = c("Subject", "ppg", "span", "oddball", "value")),
+                         by = c("Subject", "span", "oddball"))
+
+ggplot(subjwise_perf_g2, aes(value, RT)) +
+  geom_point()
+
+cor.test(subjwise_perf_g2$value, subjwise_perf_g2$RT)
+
+```
+
+### Continuous relationship between linear/quadratic pupil and linear/quadratic RTs, ACC, and VOEs?
+
+```{r, echo = F}
+trialwise_perf_g = merge(subset(trialwise_perf, ACC == 1 & set == "SET"), gdat)
+continuous_dat = data.frame(Subject = NA, beta_pupil = NA, beta_RT = NA, lin_qua = NA)
+row = 1
+for (subj in unique(trialwise_perf_g$Subject)) {
+  subj_dat = subset(trialwise_perf_g, Subject == subj)
+  
+  contrasts(subj_dat$span) = contr.poly(4)
+  subj_model = lm(RT ~ span, na.action = na.omit, data = subj_dat)
+  
+  row_lin = c(subj_dat$Subject[1], subj_dat$beta_lin[1], summary(subj_model)$coefficients[2], "linear")
+  row_qua = c(subj_dat$Subject[1], subj_dat$beta_qua[1], -summary(subj_model)$coefficients[3], "u-shape")
+  
+  continuous_dat[row,]   = row_lin
+  continuous_dat[row+1,] = row_qua
+  
+  row = row + 2
+}
+
+continuous_dat$beta_pupil = as.numeric(as.character(continuous_dat$beta_pupil))
+continuous_dat$beta_RT = as.numeric(as.character(continuous_dat$beta_RT))
+gg = ggplot(continuous_dat, aes(beta_pupil, beta_RT)) +
+  geom_point() +
+  facet_grid(~ lin_qua)
+```
+
+#### Stats
+
+```{r}
+odd_idx_dat13_wide = reshape(subset(odd_idx_dat13, ACC == "correct", select = -c(fill, beta_lin, beta_qua, lin_minus_qua)), v.names = "pupil", idvar = c("Subject", "span", "bigspan", "item", "ppg"), timevar = "oddball", direction = "wide")
+odd_idx_dat13_wide$nS3_minus_SET = odd_idx_dat13_wide[,"pupil.noSET-3"] - odd_idx_dat13_wide[,"pupil.SET"]
+odd_idx_dat13_wide$nS4_minus_SET = odd_idx_dat13_wide[,"pupil.noSET-4"] - odd_idx_dat13_wide[,"pupil.SET"]
+odd_idx_dat13_wide$nS_minus_SET  = NA
+odd_idx_dat13_wide$nS_minus_SET[odd_idx_dat13_wide$item == "Item3"] = odd_idx_dat13_wide$nS3_minus_SET[odd_idx_dat13_wide$item == "Item3"]
+odd_idx_dat13_wide$nS_minus_SET[odd_idx_dat13_wide$item == "Item4"] = odd_idx_dat13_wide$nS4_minus_SET[odd_idx_dat13_wide$item == "Item4"]
+
+### Regression for difference data
+contrasts(VOE_diff_dat_mean$span) = contr.poly(4)
+contrasts(VOE_diff_dat$span) = contr.poly(4)
+nS_VOE_linear = lme(nS_minus_SET ~ span, random = ~1|Subject, na.action = na.omit, method = "ML", data = subset(VOE_diff_dat_mean, ppg == "linear"))
+# nS_VOE_linear_3 = lme(nS_minus_SET ~ span, random = ~1|Subject, na.action = na.omit, method = "ML", data = subset(VOE_diff_dat, ppg == "linear" & item == "Item3"))
+# nS_VOE_linear_4 = lme(nS_minus_SET ~ span, random = ~1|Subject, na.action = na.omit, method = "ML", data = subset(VOE_diff_dat, ppg == "linear" & item == "Item4"))
+nS_VOE_ushape = lme(nS_minus_SET ~ span, random = ~1|Subject, na.action = na.omit, method = "ML", data = subset(VOE_diff_dat_mean, ppg == "u-shape"))
+# nS_VOE_ushape_3 = lme(nS_minus_SET ~ span, random = ~1|Subject, na.action = na.omit, method = "ML", data = subset(VOE_diff_dat, ppg == "u-shape" & item == "Item3"))
+# nS_VOE_ushape_4 = lme(nS_minus_SET ~ span, random = ~1|Subject, na.action = na.omit, method = "ML", data = subset(VOE_diff_dat, ppg == "u-shape" & item == "Item4"))
+nS_VOE_both = lme(nS_minus_SET ~ span * ppg, random = ~1|Subject, na.action = na.omit, method = "ML", data = VOE_diff_dat_mean)
+
+### Regression
+contrasts(odd_idx_dat13_wide$span) = contr.poly(4)
+baseline = lme(nS_minus_SET ~ 1, random = ~1|Subject, na.action = na.omit, method = "ML", data = subset(odd_idx_dat13_wide, ppg == "linear" & item == "Item3"))
+spanMod = update(baseline, .~. + span)
+summary(spanMod)
+baseline = lme(nS_minus_SET ~ 1, random = ~1|Subject, na.action = na.omit, method = "ML", data = subset(odd_idx_dat13_wide, ppg == "linear" & item == "Item4"))
+spanMod = update(baseline, .~. + span)
+summary(spanMod)
+
+baseline = lme(nS_minus_SET ~ 1, random = ~1|Subject, na.action = na.omit, method = "ML", data = subset(odd_idx_dat13_wide, ppg == "u-shape" & item == "Item3"))
+spanMod = update(baseline, .~. + span)
+summary(spanMod)
+baseline = lme(nS_minus_SET ~ 1, random = ~1|Subject, na.action = na.omit, method = "ML", data = subset(odd_idx_dat13_wide, ppg == "u-shape" & item == "Item4"))
+spanMod = update(baseline, .~. + span)
+summary(spanMod)
+
+# baseline = lme(nS_minus_SET ~ 1, random = ~1|Subject, na.action = na.omit, method = "ML", data = subset(odd_idx_dat13_wide, ppg == "linear"))
+# itemMod = update(baseline, .~. + item)
+# spanMod = update(baseline, .~. + item + span)
+# summary(spanMod)
+# baseline = lme(nS_minus_SET ~ 1, random = ~1|Subject, na.action = na.omit, method = "ML", data = subset(odd_idx_dat13_wide, ppg == "u-shape"))
+# itemMod = update(baseline, .~. + item)
+# spanMod = update(baseline, .~. + item + span)
+# summary(spanMod)
+
+baseline = lme(nS_minus_SET ~ 1, random = ~1|Subject, na.action = na.omit, method = "ML", data = subset(odd_idx_dat13_wide, item == "Item3"))
+spanMod = update(baseline, .~. + span)
+ppgMod  = update(baseline, .~. + span + ppg)
+span_x_ppgMod = update(baseline, .~. + span * ppg)
+summary(span_x_ppgMod)
+baseline = lme(nS_minus_SET ~ 1, random = ~1|Subject, na.action = na.omit, method = "ML", data = subset(odd_idx_dat13_wide, item == "Item4"))
+spanMod = update(baseline, .~. + span)
+ppgMod  = update(baseline, .~. + span + ppg)
+span_x_ppgMod = update(baseline, .~. + span * ppg)
+summary(span_x_ppgMod)
+
+baseline = lme(nS_minus_SET ~ 1, random = ~1|Subject, na.action = na.omit, method = "ML", data = odd_idx_dat13_wide)
+itemMod = update(baseline, .~. + item)
+spanMod = update(baseline, .~. + item + span)
+ppgMod  = update(baseline, .~. + item + span + ppg)
+span_x_ppgMod = update(baseline, .~. + item * span * ppg)
+summary(span_x_ppgMod)
+
+### t.tests
+# 0-span (lin & qua)
+(t_span0_item3_nS3_lin = t.test(subset(odd_idx_dat13_wide, item == "Item3" & span == "0span" & ppg == "linear")$nS3_minus_SET))
+(t_span0_item3_nS3_qua = t.test(subset(odd_idx_dat13_wide, item == "Item3" & span == "0span" & ppg == "u-shape")$nS3_minus_SET))
+(t_span0_item4_nS4_lin = t.test(subset(odd_idx_dat13_wide, item == "Item4" & span == "0span" & ppg == "linear")$nS4_minus_SET))
+(t_span0_item4_nS4_qua = t.test(subset(odd_idx_dat13_wide, item == "Item4" & span == "0span" & ppg == "u-shape")$nS4_minus_SET))
+# 1-span (lin & qua)
+(t_span123_item3_nS3_lin = t.test(subset(odd_idx_dat13_wide, item == "Item3" & span == "1span" & ppg == "linear")$nS3_minus_SET))
+(t_span123_item3_nS3_qua = t.test(subset(odd_idx_dat13_wide, item == "Item3" & span == "1span" & ppg == "u-shape")$nS3_minus_SET))
+(t_span123_item4_nS4_lin = t.test(subset(odd_idx_dat13_wide, item == "Item4" & span == "1span" & ppg == "linear")$nS4_minus_SET))
+(t_span123_item4_nS4_qua = t.test(subset(odd_idx_dat13_wide, item == "Item4" & span == "1span" & ppg == "u-shape")$nS4_minus_SET))
+# 1-span (lin & qua)
+(t_span123_item3_nS3_lin = t.test(subset(odd_idx_dat13_wide, item == "Item3" & span == "2span" & ppg == "linear")$nS3_minus_SET))
+(t_span123_item3_nS3_qua = t.test(subset(odd_idx_dat13_wide, item == "Item3" & span == "2span" & ppg == "u-shape")$nS3_minus_SET))
+(t_span123_item4_nS4_lin = t.test(subset(odd_idx_dat13_wide, item == "Item4" & span == "2span" & ppg == "linear")$nS4_minus_SET))
+(t_span123_item4_nS4_qua = t.test(subset(odd_idx_dat13_wide, item == "Item4" & span == "2span" & ppg == "u-shape")$nS4_minus_SET))
+# 1-span (lin & qua)
+(t_span123_item3_nS3_lin = t.test(subset(odd_idx_dat13_wide, item == "Item3" & span == "3span" & ppg == "linear")$nS3_minus_SET))
+(t_span123_item3_nS3_qua = t.test(subset(odd_idx_dat13_wide, item == "Item3" & span == "3span" & ppg == "u-shape")$nS3_minus_SET))
+(t_span123_item4_nS4_lin = t.test(subset(odd_idx_dat13_wide, item == "Item4" & span == "3span" & ppg == "linear")$nS4_minus_SET))
+(t_span123_item4_nS4_qua = t.test(subset(odd_idx_dat13_wide, item == "Item4" & span == "3span" & ppg == "u-shape")$nS4_minus_SET))
+# Compare lin & qua
+colnames(odd_idx_dat13_wide)[colnames(odd_idx_dat13_wide) == "pupil.noSET-3"] = "pupil.noSET3"
+colnames(odd_idx_dat13_wide)[colnames(odd_idx_dat13_wide) == "pupil.noSET-4"] = "pupil.noSET4"
+t.test(pupil.noSET3 ~ ppg, data = subset(odd_idx_dat13_wide, item == "Item3" & span == "0span"))
+t.test(pupil.noSET4 ~ ppg, data = subset(odd_idx_dat13_wide, item == "Item4" & span == "0span"))
+t.test(pupil.noSET3 ~ ppg, data = subset(odd_idx_dat13_wide, item == "Item3" & span == "1span"))
+t.test(pupil.noSET4 ~ ppg, data = subset(odd_idx_dat13_wide, item == "Item4" & span == "1span"))
+t.test(pupil.noSET3 ~ ppg, data = subset(odd_idx_dat13_wide, item == "Item3" & span == "2span"))
+t.test(pupil.noSET4 ~ ppg, data = subset(odd_idx_dat13_wide, item == "Item4" & span == "2span"))
+t.test(pupil.noSET3 ~ ppg, data = subset(odd_idx_dat13_wide, item == "Item3" & span == "3span"))
+t.test(pupil.noSET4 ~ ppg, data = subset(odd_idx_dat13_wide, item == "Item4" & span == "3span"))
+
+t.test(nS3_minus_SET ~ ppg, data = subset(odd_idx_dat13_wide, item == "Item3" & span == "0span"))
+t.test(nS4_minus_SET ~ ppg, data = subset(odd_idx_dat13_wide, item == "Item4" & span == "0span"))
+t.test(nS3_minus_SET ~ ppg, data = subset(odd_idx_dat13_wide, item == "Item3" & span == "1span"))
+t.test(nS4_minus_SET ~ ppg, data = subset(odd_idx_dat13_wide, item == "Item4" & span == "1span"))
+t.test(nS3_minus_SET ~ ppg, data = subset(odd_idx_dat13_wide, item == "Item3" & span == "2span"))
+t.test(nS4_minus_SET ~ ppg, data = subset(odd_idx_dat13_wide, item == "Item4" & span == "2span"))
+t.test(nS3_minus_SET ~ ppg, data = subset(odd_idx_dat13_wide, item == "Item3" & span == "3span"))
+t.test(nS4_minus_SET ~ ppg, data = subset(odd_idx_dat13_wide, item == "Item4" & span == "3span"))
+
+(t_span3_nS3_span0vs123 = t.test(pupil ~ bigspan, data = subset(odd_idx_dat12, ACC == "correct" & oddball == "noSET-3" & item == "Item3")))
+(t_span4_nS4_span0vs123 = t.test(pupil ~ bigspan, data = subset(odd_idx_dat12, ACC == "correct" & oddball == "noSET-4" & item == "Item4")))
+```
+
+## Compare performance between the two groups
+
+```{r, echo = F, warning = F, message = F}
+### Prepare data
+# s_perf_ppg = merge(subjwise_perf_oddball, gdat)
+s_perf_ppg = merge(subjwise_perf_set,
+                   subset(gdat, select = c(Subject, ppg)))
+s_perf_ppg_cor = merge(cor_subjwise_perf_set,
+                   subset(gdat, select = c(Subject, ppg)))
+s_perf_ppg = s_perf_ppg[order(s_perf_ppg$Subject, s_perf_ppg$set, s_perf_ppg$span),]
+s_perf_ppg_cor = s_perf_ppg_cor[order(s_perf_ppg_cor$Subject, s_perf_ppg_cor$set, s_perf_ppg_cor$span),]
+s_perf_dprime = merge(subset(s_perf_ppg, set == "SET", select = -set),
+                      subset(s_perf_ppg, set == "noSET", select = -set),
+                      by = c("Subject", "span", "ppg"),
+                      suffixes = c("_SET", "_noSET"))
+s_perf_dprime$dprime = dprime(s_perf_dprime$ACC_SET, 1 - s_perf_dprime$ACC_noSET)
+s_perf_dprime$ACC_SET_minus_noSET = s_perf_dprime$ACC_SET - s_perf_dprime$ACC_noSET
+
+say_SET_counts = ddply(subset(trialwise_perf, (set == "SET" & ACC == 1) | (set == "noSET" & ACC == 0)),
+                       .(Subject, span),
+                       summarize,
+                       count = length(RT),
+                       RT = mean(RT, na.rm = T))
+say_noSET_counts = ddply(subset(trialwise_perf, (set == "SET" & ACC == 0) | (set == "noSET" & ACC == 1)),
+                       .(Subject, span),
+                       summarize,
+                       count = length(RT),
+                       RT = mean(RT, na.rm = T))
+compare_say_SETnoSET_counts = merge(say_SET_counts,
+                                    say_noSET_counts,
+                                    by = c("Subject", "span"),
+                                    suffixes = c("_SET", "_noSET"))
+compare_say_SETnoSET_counts$SET_minus_noSET = with(compare_say_SETnoSET_counts, count_SET - count_noSET)
+compare_say_SETnoSET_counts = merge(compare_say_SETnoSET_counts,
+                                    subset(gdat, select = c("Subject", "ppg")))
+
+### RTs
+gg_ppg_RT = ggplot(s_perf_ppg, aes(span, RT, color = ppg, group = ppg, shape = ppg)) +
+  theme_bw() +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "pointrange") +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "line") +
+  scale_color_manual(values = bw_colors) +
+  # coord_trans(y = "log10") +
+  labs(x = "", y = "RT (ms)", color = "") +
+  scale_x_discrete(labels = c("0sp", "1sp", "2sp", "3sp")) +
+  theme(legend.position = "none") +  #c(.1, .9), legend.background = element_rect(fill = "transparent")) +
+  facet_grid( ~ set)
+### ACCs
+gg_ppg_ACC = ggplot(s_perf_ppg, aes(span, 1-ACC, color = ppg, group = ppg, shape = ppg)) +
+  theme_bw() +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "pointrange") +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "line") +
+  scale_color_manual(values = bw_colors) +
+  # coord_trans(y = "log10") +
+  # scale_y_log10(breaks = seq(0, .20, .02)) +  #Gives the wrong results!!!
+  labs(x = "", y = "Error rates (%)", color = "") +
+  scale_x_discrete(labels = c("0sp", "1sp", "2sp", "3sp")) +
+  theme(legend.position = "none") +  #c(.1, .9), legend.background = element_rect(fill = "transparent")) +
+  facet_grid( ~ set)
+### d-prime
+gg_ppg_dprime = ggplot(s_perf_dprime, aes(span, dprime, color = ppg, group = ppg, shape = ppg)) +
+  theme_bw() +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "pointrange") +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "line") +
+  scale_color_manual(values = bw_colors) +
+  # coord_trans(y = "log10") +
+  # scale_y_log10(breaks = seq(0, .20, .02)) +  #Gives the wrong results!!!
+  labs(x = "", y = "d-prime", color = "") +
+  scale_x_discrete(labels = c("0sp", "1sp", "2sp", "3sp")) +
+  theme(legend.position = "none")
+### Number of SET responses minus number of noSET responses
+gg_ppg_ACC_SET_minus_noSET = ggplot(compare_say_SETnoSET_counts, aes(span, SET_minus_noSET, color = ppg, group = ppg, shape = ppg)) +
+  theme_bw() +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "pointrange") +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "line") +
+  scale_color_manual(values = bw_colors) +
+  # coord_trans(y = "log10") +
+  # scale_y_log10(breaks = seq(0, .20, .02)) +  #Gives the wrong results!!!
+  labs(x = "", y = "noSET bias <-> SET Bias", color = "") +
+  scale_x_discrete(labels = c("0sp", "1sp", "2sp", "3sp")) +
+  theme(legend.position = "none")
+
+gg_ppg_ACC_count_SET = ggplot(compare_say_SETnoSET_counts, aes(span, count_SET, color = ppg, group = ppg, shape = ppg)) +
+  theme_bw() +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "pointrange") +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "line") +
+  scale_color_manual(values = bw_colors) +
+  # coord_trans(y = "log10") +
+  # scale_y_log10(breaks = seq(0, .20, .02)) +  #Gives the wrong results!!!
+  labs(x = "", y = "noSET bias <-> SET Bias", color = "") +
+  scale_x_discrete(labels = c("0sp", "1sp", "2sp", "3sp")) +
+  theme(legend.position = "none")
+
+gg_ppg_ACC_count_noSET = ggplot(compare_say_SETnoSET_counts, aes(span, count_noSET, color = ppg, group = ppg, shape = ppg)) +
+  theme_bw() +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "pointrange") +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "line") +
+  scale_color_manual(values = bw_colors) +
+  # coord_trans(y = "log10") +
+  # scale_y_log10(breaks = seq(0, .20, .02)) +  #Gives the wrong results!!!
+  labs(x = "", y = "noSET bias <-> SET Bias", color = "") +
+  scale_x_discrete(labels = c("0sp", "1sp", "2sp", "3sp")) +
+  theme(legend.position = "none")
+
+### Correlation between ACC & RT and lin_minus_qua
+gg_linqua_ACC_cont = ggplot(s_perf_ppg, aes(lin_minus_qua, ACC, color = oddball, fill = oddball)) +
+  theme_bw() +
+  geom_vline(xintercept = 0) +
+  geom_point(alpha = .5) +
+  geom_smooth(method = "lm") +
+  scale_color_manual(values = oddball_colors) +
+  scale_fill_manual(values = oddball_colors) +
+  theme(legend.position = "none") +
+  facet_wrap(~ span, nrow = 1)
+
+lin_minus_qua = c(1, -1)
+with(subset(s_perf_ppg, span == "0span" & set == "SET"), cor.test(lin_minus_qua, log_errors))
+with(subset(s_perf_ppg, span != "0span" & set == "SET"), cor.test(lin_minus_qua, log_errors))
+with(subset(s_perf_ppg, span == "0span" & set == "SET"), cor.test(lin_minus_qua, log_RT))
+with(subset(s_perf_ppg, span != "0span" & set == "SET"), cor.test(lin_minus_qua, log_RT))
+
+gg_linqua_RT_cont = ggplot(s_perf_ppg, aes(lin_minus_qua, RT/1000, color = oddball, fill = oddball)) +
+  theme_bw() +
+  geom_vline(xintercept = 0) +
+  geom_point(alpha = .5) +
+  geom_smooth(method = "lm") +
+  scale_color_manual(values = oddball_colors) +
+  scale_fill_manual(values = oddball_colors) +
+  theme(legend.position = "none") +
+  facet_wrap(~ span, nrow = 1)
+
+s = ggplot(s_perf_ppg, aes(RT/1000, ACC, color = lin_minus_qua)) +
+  geom_point() +
+  facet_grid(oddball ~ span)
+
+if (ggsave_figures) {
+  plot(gg_ppg_RT)
+  ggsave(plot = gg_ppg_RT, paste(figure_dir, "/Figure5_ppg_RT.png", sep = ""), width = one_by_two$width, height = one_by_two$height)
+  plot(gg_ppg_ACC)
+  ggsave(plot = gg_ppg_ACC, paste(figure_dir, "/Figure5_ppg_ACC.png", sep = ""), width = one_by_two$width, height = one_by_two$height)
+  gg_linqua_perf_cont = arrangeGrob(gg_linqua_ACC_cont, gg_linqua_RT_cont, nrow = 2)
+  plot(gg_linqua_perf_cont)
+  ggsave(plot = gg_linqua_perf_cont, paste(figure_dir, "/Figure5Sa.png", sep = ""), width = 7, height = 4)
+  ggsave(plot = gg_ppg_dprime, file.path(figure_dir, "Figure5_ppg_dprime.png"), width = one_by_one$width, height = one_by_one$height)
+  ggsave(plot = gg_ppg_ACC_SET_minus_noSET, file.path(figure_dir, "Figure5_ppg_ACC_SET_minus_noSET.png"), width = one_by_one$width, height = one_by_one$height)
+}
+```
+
+#### Statistical tests
+
+```{r, echo = F, message = F, error = F}
+### Prepare data
+s_perf_ppg_cor$log_RT = log(s_perf_ppg_cor$RT + 1)
+(skew_s_perf_ppg_RT = agostino.test(s_perf_ppg_cor$RT))
+(skew_s_perf_ppg_logRT = agostino.test(s_perf_ppg_cor$log_RT))
+s_perf_ppg$log_errors = log(1 - s_perf_ppg$ACC + .01)
+(skew_s_perf_ppg_errors = agostino.test(1 - s_perf_ppg$ACC + .01))
+(skew_s_perf_ppg_logerrors = agostino.test(s_perf_ppg$log_errors))
+
+### Compare linear and inverse-U PDPs
+contrasts(s_perf_ppg$span) = contr.poly(4)
+
+# SET
+print("SET ACC")
+baselineMod = lme(log_errors ~ 1, random = ~1|Subject, data = subset(s_perf_ppg, set == "SET"), method = "ML", na.action = na.omit)
+span_x_ppg_mod = update(baselineMod, .~. + span * ppg)
+summary(span_x_ppg_mod)
+
+print("SET RT")
+baselineMod = lme(log_RT ~ 1, random = ~1|Subject, data = subset(s_perf_ppg_cor, set == "SET"), method = "ML", na.action = na.omit)
+span_x_ppg_mod = update(baselineMod, .~. + span * ppg)
+summary(span_x_ppg_mod)
+
+# noSET
+print("noSET ACC")
+baselineMod = lme(log_errors ~ 1, random = ~1|Subject, data = subset(s_perf_ppg, set == "noSET"), method = "ML", na.action = na.omit)
+span_x_ppg_mod = update(baselineMod, .~. + span * ppg)
+summary(span_x_ppg_mod)
+
+print("noSET RT")
+baselineMod = lme(log_RT ~ 1, random = ~1|Subject, data = subset(s_perf_ppg_cor, set == "noSET"), method = "ML", na.action = na.omit)
+span_x_ppg_mod = update(baselineMod, .~. + span * ppg)
+summary(span_x_ppg_mod)
+
+# d-prime
+baselineMod = lme(dprime ~ 1, random = ~1|Subject, data = s_perf_dprime, method = "ML", na.action = na.omit)
+span_x_ppg_mod = update(baselineMod, .~. + span * ppg)
+summary(span_x_ppg_mod)
+
+p_0 = t.test(dprime ~ ppg, data = subset(s_perf_dprime, span == "0span"))$p.value
+p_1 = t.test(dprime ~ ppg, data = subset(s_perf_dprime, span == "1span"))$p.value
+p_2 = t.test(dprime ~ ppg, data = subset(s_perf_dprime, span == "2span"))$p.value
+p_3 = t.test(dprime ~ ppg, data = subset(s_perf_dprime, span == "3span"))$p.value
+
+p.adjust(c(p_0, p_1, p_2, p_3), method = "bonferroni")
+
+# SET: Analyze linear and inverse-U PDPs separately
+trialwise_perf$ppg = factor(trialwise_perf$ppg)
+contrasts(trialwise_perf$ppg) = lin_minus_qua
+
+if (run_regression_models) {
+  
+  print("SET RT")
+  RT_lmer = lmer(log_RT ~ ppg * span + (ppg * span | Subject),
+                 data = subset(trialwise_perf, ACC == 1 & set == "SET"),
+                 na.action = na.omit,
+                 REML = F,
+                 control = lmerControl(optCtrl = list(maxfun = 1e6)))
+  summary(RT_lmer)
+  anova(RT_lin_lmer, type = 3)
+  
+  print("linear SET RT")
+  RT_lin_lmer = lmer(log_RT ~ span + (span | Subject),
+                 data = subset(trialwise_perf, ACC == 1 & set == "SET" & ppg == "linear"),
+                 na.action = na.omit,
+                 REML = F,
+                 control = lmerControl(optCtrl = list(maxfun = 1e6)))
+  summary(RT_lin_lmer)
+  
+  print("inverse-U SET RT")
+  RT_qua_lmer = lmer(log_RT ~ span + (span | Subject),
+                 data = subset(trialwise_perf, ACC == 1 & set == "SET" & ppg == "u-shape"),
+                 na.action = na.omit,
+                 REML = F,
+                 control = lmerControl(optCtrl = list(maxfun = 1e6)))
+  summary(RT_qua_lmer)
+  
+  print("SET ACC")
+  ACC_lmer = glmer(ACC ~ ppg * span + (ppg * span | Subject),
+                 data = subset(trialwise_perf, set == "SET"),
+                 na.action = na.omit,
+                 family = binomial,
+                 control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e6)))
+  summary(ACC_lmer)
+  anova(ACC_lmer, type = 3)
+  
+  print("linear SET ACC")
+  ACC_lin_lmer = glmer(ACC ~ span + (span | Subject),
+                 data = subset(trialwise_perf, set == "SET" & ppg == "linear"),
+                 na.action = na.omit,
+                 family = binomial,
+                 control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e6)))
+  summary(ACC_lin_lmer)
+  anova(ACC_lin_lmer, type = 3)
+  
+  print("inverse-U SET ACC")
+  ACC_qua_lmer = glmer(ACC ~ span + (span | Subject),
+                 data = subset(trialwise_perf, set == "SET" & ppg == "u-shape"),
+                 na.action = na.omit,
+                 family = binomial,
+                 control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e6)))
+  summary(ACC_qua_lmer)
+  anova(ACC_qua_lmer, type = 3)
+}
+
+# print("linear SET ACC")
+# baselineMod = lme(log_errors ~ 1, random = ~1|Subject, data = subset(s_perf_ppg, set == "SET" & ppg == "linear"), method = "ML", na.action = na.omit)
+# span_mod = update(baselineMod, .~. + span)
+# summary(span_mod)
+# 
+# print("linear SET RT")
+# baselineMod = lme(log_RT ~ 1, random = ~1|Subject, data = subset(s_perf_ppg_cor, set == "SET" & ppg == "linear"), method = "ML", na.action = na.omit)
+# span_mod = update(baselineMod, .~. + span)
+# summary(span_mod)
+# 
+# print("inverse-U SET ACC")
+# baselineMod = lme(log_errors ~ 1, random = ~1|Subject, data = subset(s_perf_ppg, set == "SET" & ppg == "u-shape"), method = "ML", na.action = na.omit)
+# span_mod = update(baselineMod, .~. + span)
+# summary(span_mod)
+# 
+# print("inverse-U SET RT")
+# baselineMod = lme(log_RT ~ 1, random = ~1|Subject, data = subset(s_perf_ppg_cor, set == "SET" & ppg == "u-shape"), method = "ML", na.action = na.omit)
+# span_mod = update(baselineMod, .~. + span)
+# summary(span_mod)
+
+### Rests
+s_perf_ppg_wide_RT = reshape(s_perf_ppg, drop = c("ACC", "log_ACC", "log_RT"), timevar = "span", idvar = c("Subject", "set", "oddball", "ppg"), v.names = "RT", direction = "wide")
+s_perf_ppg_wide_RT$RT3minus2 = with(s_perf_ppg_wide_RT, RT.3span - RT.2span)
+s_perf_ppg_wide_RT$log_RT3minus2 = log(s_perf_ppg_wide_RT$RT3minus2 + 1000)
+t.test(log_RT3minus2 ~ ppg, data = s_perf_ppg_wide_RT)
+s_perf_ppg_wide_ACC = reshape(s_perf_ppg, drop = c("log_ACC", "RT", "log_RT"), timevar = "span", idvar = c("Subject", "set", "oddball", "ppg"), v.names = "ACC", direction = "wide")
+s_perf_ppg_wide_ACC$ACC3minus2 = with(s_perf_ppg_wide_ACC, ACC.3span - ACC.2span)
+s_perf_ppg_wide_ACC$log_ACC3minus2 = log(s_perf_ppg_wide_ACC$ACC3minus2 + 1000)
+t.test(ACC3minus2 ~ ppg, data = subset(s_perf_ppg_wide_ACC, set == "SET"))
+
+```
+
+### Questionnaire data
+
+```{r, echo = F, message = F, error = F}
+### Questionnaire
+qu13 = read.csv("quest2013.csv")
+qu13$sex = factor(qu13$sex, levels = c("female", "male"), labels = c("F", "M"))
+qu15 = read.csv("quest2015.csv")
+qu13_s = subset(qu13, select = c("Subject", "birthday", "sex", "date", "SET_verbalstrategy", "SET_consciousrule", "SET_remember", "SET_lastitem", "SET_features", "max_forward", "total_forward", "max_backward", "total_backward", "an_syn_rawscore"))
+qu15_s = subset(qu15, select = c("Subj", "birthday", "sex", "date_tested", "Q1_1", "Q1_2", "Q1_3", "Q1_4", "Q1_5", "d_forw_max", "d_forw_sum", "d_back_max", "d_back_sum", "num_series"))
+qu13_s$year = 2013
+qu15_s$year = 2015
+
+colnames(qu15_s) = colnames(qu13_s)
+qu = rbind(qu13_s, qu15_s)
+
+if (exclude_poor_subjects) {
+  qu = subset(qu, !Subject %in% chance_performers)
+}
+
+## Get demographics for the paper
+qu$birthday_ = as.Date(qu$birthday, "%m/%d/%Y")
+qu$testdate_ = as.Date(qu$date, "%m/%d/%Y")
+qu$age_days = qu$testdate_ - qu$birthday_
+qu$age_years = as.numeric(as.numeric(qu$age_days)) / 365
+print("age range")
+(age_range = range(qu$age_years, na.rm = T))
+print("mean age")
+(mean_age = mean(qu$age_years, na.rm = T))
+print("sd age")
+(sd_age = sd(qu$age_years, na.rm = T))
+print("number of F and M")
+(sum(qu$sex == "F", na.rm = T)); (sum(qu$sex == "M", na.rm = T))
+
+qu_ppg = merge(qu, gdat)
+qu_ppg_long = melt(qu_ppg, id.vars = c("Subject", "ppg", "year", "lin_minus_qua"), measure.vars = c("SET_verbalstrategy", "SET_consciousrule", "SET_remember", "SET_lastitem", "SET_features", "max_forward", "total_forward", "max_backward", "total_backward", "an_syn_rawscore"), variable_name = "measure")
+
+# Answers range from 0 to 4 (not 1 to 5)
+qu_ppg_long$value[qu_ppg_long$measure %in% c("SET_verbalstrategy", "SET_consciousrule", "SET_remember", "SET_lastitem", "SET_features") & qu_ppg_long$year == 2015] = qu_ppg_long$value[qu_ppg_long$measure %in% c("SET_verbalstrategy", "SET_consciousrule", "SET_remember", "SET_lastitem", "SET_features") & qu_ppg_long$year == 2015] - 1
+# Reverse questions 1 (verbalstrategy), 3 (memorize all), 4 (remember last item), 5 (allfeatures)
+qu_ppg_long$value[qu_ppg_long$measure %in% c("SET_verbalstrategy", "SET_remember", "SET_lastitem", "SET_features") & qu_ppg_long$year == 2015] = 4 - qu_ppg_long$value[qu_ppg_long$measure %in% c("SET_verbalstrategy", "SET_remember", "SET_lastitem", "SET_features") & qu_ppg_long$year == 2015]
+
+# Subset data
+quest_dat = subset(qu_ppg_long, measure %in% c("SET_verbalstrategy", "SET_consciousrule", "SET_remember", "SET_lastitem", "SET_features"))
+ds_dat = subset(qu_ppg_long, measure %in% c("max_forward", "total_forward", "max_backward", "total_backward"))
+# Plots
+gg_ppg_qu = ggplot(quest_dat, aes(ppg, value, fill = ppg)) +
+  theme_bw() +
+  stat_summary(fun.y = mean, geom = "bar") +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "pointrange") +
+  coord_cartesian(y = c(0, 4)) +
+  labs(x = "", y = "Participant response") +
+  theme(legend.position = "none") +
+  facet_grid( ~ measure)
+hist(subset(quest_dat, measure == "SET_lastitem")$value, breaks = seq(-1, 4))
+gg_ppg_ds = ggplot(ds_dat, aes(ppg, value, fill = ppg)) +
+  theme_bw() +
+  stat_summary(fun.y = mean, geom = "bar") +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "pointrange") +
+  theme(legend.position = "none") +
+  facet_grid( ~ measure)
+gg_ppg_ns = ggplot(subset(qu_ppg_long, measure == "an_syn_rawscore"), aes(ppg, value, fill = ppg)) +
+  theme_bw() +
+  stat_summary(fun.y = mean, geom = "bar") +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "pointrange") +
+  theme(legend.position = "none") +
+  facet_grid( ~ year)
+
+if (ggsave_figures) {
+  plot(gg_ppg_qu)
+  ggsave(plot = gg_ppg_qu, paste(figure_dir, "/Figure5_ppg_qu.png", sep = ""), width = 10, height = 5)
+  plot(gg_ppg_ds)
+  ggsave(plot = gg_ppg_ds, paste(figure_dir, "/Figure5_ppg_ds.png", sep = ""), width = 10, height = 5)
+  plot(gg_ppg_ns)
+  ggsave(plot = gg_ppg_ns, paste(figure_dir, "/Figure5_ppg_ns.png", sep = ""), width = 5, height = 5)
+}
+```
+
+#### Stats
+
+```{r}
+# Questionnaire
+for (quest in unique(quest_dat$measure)) {
+  print(quest)
+  print(t.test(value ~ ppg, data = subset(quest_dat, measure == quest)))
+}
+
+# DS
+for (ds in unique(ds_dat$measure)) {
+  print(ds)
+  print(t.test(value ~ ppg, data = subset(ds_dat, measure == ds)))
+}
+
+# An-Syn / Numb-Ser
+t.test(value ~ ppg, data = subset(qu_ppg_long, measure == "an_syn_rawscore" & year == 2013))
+t.test(value ~ ppg, data = subset(qu_ppg_long, measure == "an_syn_rawscore" & year == 2015))
+
+# Means
+by(qu_ppg_long$value, qu_ppg_long$measure, sd, na.rm = T)
+```
+
+## Does pupil dilation differ between good and bad or between fast and slow performers?
+
+```{r, echo = F, warning = F, message = F, fig.cap = "Pupil dilation during correctly answered SET trials for subjects performing above and below average on each span; response times in inlets. In subjects performing above average (right panels), pupil dilation increases linearly from 0-span to 3-span trials, especially during and after the response period, in which the SEMs of the different spans barely even touch. Subject performing below average (left panels), on the other hand, only seem to differentiate between 0-span trials and trials of higher spans, without further differentiation amongst these."}
+### Prepare data
+# Get the groups
+subjwise_SET_perf = ddply(subset(trialwise_perf, oddball == "SET"), .(Subject), summarize,
+                          SET_RT = median(RT, na.rm = T),
+                          SET_ACC = mean(ACC, na.rm = T))
+
+subjwise_SET_perf$ACC_group = "96-100%"
+subjwise_SET_perf$ACC_group[subjwise_SET_perf$SET_ACC < .95] = "65-95%"
+
+subjwise_SET_perf$RT_group = "fast"
+subjwise_SET_perf$RT_group[subjwise_SET_perf$SET_RT > median(subjwise_SET_perf$SET_RT, na.rm = T)] = "slow"
+
+# Add groups to pupil data
+pupildat_SET_ACC1 = merge(subset(pupildat, ACC == 1 & oddball == "SET", select = c("Subject", "span", "rel.time", "rel.pupil")),
+                          subset(subjwise_SET_perf, select = c("Subject", "SET_RT", "SET_ACC", "ACC_group", "RT_group")),
+                          by = c("Subject"), all.x = T, sort = F)
+pupildat_SET_ACC1$ACC_group = factor(pupildat_SET_ACC1$ACC_group)
+pupildat_SET_ACC1$RT_group = factor(pupildat_SET_ACC1$RT_group)
+
+# Get number of Ss in each group
+print(levels(pupildat_SET_ACC1$ACC_group)[1])
+length(unique(subset(pupildat_SET_ACC1, ACC_group == levels(pupildat_SET_ACC1$ACC_group)[1])$Subject))
+print(levels(pupildat_SET_ACC1$ACC_group)[2])
+length(unique(subset(pupildat_SET_ACC1, ACC_group == levels(pupildat_SET_ACC1$ACC_group)[2])$Subject))
+
+print(levels(pupildat_SET_ACC1$RT_group)[1])
+length(unique(subset(pupildat_SET_ACC1, RT_group == levels(pupildat_SET_ACC1$RT_group)[1])$Subject))
+print(levels(pupildat_SET_ACC1$RT_group)[2])
+length(unique(subset(pupildat_SET_ACC1, RT_group == levels(pupildat_SET_ACC1$RT_group)[2])$Subject))
+
+### Plots
+# Separation by ACC
+gg_better_worse_pupils = ggplot(pupildat_SET_ACC1, aes(rel.time, rel.pupil, color = span, fill = span)) +
+  geom_tile(data = tile_data, aes(x = x, y = y, width = width, height = height), inherit.aes = F, fill = "white") +
+  geom_vline(xintercept = response_prompt_time, size = 1.5) +
+  geom_text(data = tile_data, aes(x = x, y = -0.03, label = labels), inherit.aes = F) +
+  geom_text(data = resp_fix_labels, aes(x = x, y = y, label = label), inherit.aes = F) +
+  labs(x = 'Time (s)', y = 'Pupil dilation (mm)', color = ' ', fill = ' ') +
+  # theme(legend.position = c(.1, .8), legend.background = element_rect(fill = "transparent")) +
+  scale_x_continuous(breaks = seq(0, 9, 1.5)) +
+  stat_summary(fun.y = mean, geom = 'point') +
+  stat_summary(fun.data = mean_se, geom = 'smooth', alpha = 0.2) +
+  scale_color_brewer(palette = "RdYlBu") +
+  scale_fill_brewer(palette = "RdYlBu") +
+  labs(x = 'Time (s)', y = 'TEPR (mm)', color = ' ', fill = ' ') +
+  theme(legend.position = c(.4, .9), legend.background = element_rect(fill = "transparent")) +
+  facet_grid( ~ ACC_group)
+# Inlay
+bw_inlay_dat = ddply(subset(pupildat_SET_ACC1, rel.time >= 5.5 & rel.time <= 6), .(Subject, span, ACC_group, RT_group), summarize,
+      pupil4 = mean(rel.pupil, na.rm = T))
+gg_bw_inlay = ggplot(bw_inlay_dat, aes(span, pupil4, fill = span)) +
+  theme_bw() +
+  stat_summary(fun.y = mean, geom = 'bar') +
+  stat_summary(fun.data = mean_se, geom = 'pointrange') +
+  scale_fill_brewer(palette = "RdYlBu") +
+  labs(x = "", y = "Pupil dilation Item4") +
+  theme(legend.position = "none") +
+  facet_grid( ~ ACC_group)
+  
+# Separation by RT
+gg_fast_slow_pupils = gg_better_worse_pupils +
+  facet_grid( ~ RT_group)
+# Inlay
+gg_fs_inlay = gg_bw_inlay +
+  facet_grid( ~ RT_group)
+
+# Separation by RT for only better Ss
+pupildat_SET_ACC1_good = subset(pupildat_SET_ACC1, SET_ACC >= .95)
+pupildat_SET_ACC1_good$RT_group = "slow"
+pupildat_SET_ACC1_good$RT_group[pupildat_SET_ACC1_good$SET_RT < median(pupildat_SET_ACC1_good$SET_RT)] = "fast"
+pupildat_SET_ACC1_good$RT_group = factor(pupildat_SET_ACC1_good$RT_group)
+
+pupildat_SET_ACC1_bad = subset(pupildat_SET_ACC1, SET_ACC < .95)
+pupildat_SET_ACC1_bad$RT_group = "slow"
+pupildat_SET_ACC1_bad$RT_group[pupildat_SET_ACC1_bad$SET_RT < median(pupildat_SET_ACC1_bad$SET_RT)] = "fast"
+pupildat_SET_ACC1_bad$RT_group = factor(pupildat_SET_ACC1_bad$RT_group)
+
+# Get number of Ss in each group
+print(levels(pupildat_SET_ACC1_good$RT_group)[1])
+length(unique(subset(pupildat_SET_ACC1_good, RT_group == levels(pupildat_SET_ACC1_good$RT_group)[1])$Subject))
+print(levels(pupildat_SET_ACC1_good$RT_group)[2])
+length(unique(subset(pupildat_SET_ACC1_good, RT_group == levels(pupildat_SET_ACC1_good$RT_group)[2])$Subject))
+
+### Plot good Ss
+gg_better_fast_slow_pupils = ggplot(pupildat_SET_ACC1_good, aes(rel.time, rel.pupil, color = span, fill = span)) +
+  geom_tile(data = tile_data, aes(x = x, y = y, width = width, height = height), inherit.aes = F, fill = "white") +
+  geom_vline(xintercept = response_prompt_time, size = 1.5) +
+  geom_text(data = tile_data, aes(x = x, y = -0.05, label = labels), inherit.aes = F) +
+  geom_text(data = resp_fix_labels, aes(x = x, y = -0.05, label = label), inherit.aes = F) +
+  labs(x = 'Time (s)', y = 'Pupil dilation (mm)', color = ' ', fill = ' ') +
+  # theme(legend.position = c(.1, .8), legend.background = element_rect(fill = "transparent")) +
+  scale_x_continuous(breaks = seq(0, 9, 1.5)) +
+  stat_summary(fun.y = mean, geom = 'point') +
+  stat_summary(fun.data = mean_se, geom = 'smooth', alpha = 0.2) +
+  scale_color_brewer(palette = "RdYlBu") +
+  scale_fill_brewer(palette = "RdYlBu") +
+  labs(x = 'Time (s)', y = 'TEPR (mm)', color = ' ', fill = ' ') +
+  theme(legend.position = c(.4, .9), legend.background = element_rect(fill = "transparent")) +
+  facet_grid( ~ RT_group)
+# Inlay
+bw_inlay_dat = ddply(subset(pupildat_SET_ACC1_good, rel.time >= 5.5 & rel.time <= 6), .(Subject, span, ACC_group, RT_group), summarize,
+      pupil4 = mean(rel.pupil, na.rm = T))
+gg_bfs_inlay = ggplot(bw_inlay_dat, aes(span, pupil4, fill = span)) +
+  theme_bw() +
+  stat_summary(fun.y = mean, geom = 'bar') +
+  stat_summary(fun.data = mean_se, geom = 'pointrange') +
+  scale_fill_brewer(palette = "RdYlBu") +
+  labs(x = "", y = "Pupil dilation Item4") +
+  theme(legend.position = "none") +
+  facet_grid( ~ RT_group)
+
+### Plot bad Ss
+gg_worse_fast_slow_pupils = ggplot(pupildat_SET_ACC1_bad, aes(rel.time, rel.pupil, color = span, fill = span)) +
+  geom_tile(data = tile_data, aes(x = x, y = y, width = width, height = height), inherit.aes = F, fill = "white") +
+  geom_vline(xintercept = response_prompt_time, size = 1.5) +
+  geom_text(data = tile_data, aes(x = x, y = -0.05, label = labels), inherit.aes = F) +
+  geom_text(data = resp_fix_labels, aes(x = x, y = -0.05, label = label), inherit.aes = F) +
+  labs(x = 'Time (s)', y = 'Pupil dilation (mm)', color = ' ', fill = ' ') +
+  # theme(legend.position = c(.1, .8), legend.background = element_rect(fill = "transparent")) +
+  scale_x_continuous(breaks = seq(0, 9, 1.5)) +
+  stat_summary(fun.y = mean, geom = 'point') +
+  stat_summary(fun.data = mean_se, geom = 'smooth', alpha = 0.2) +
+  scale_color_brewer(palette = "RdYlBu") +
+  scale_fill_brewer(palette = "RdYlBu") +
+  labs(x = 'Time (s)', y = 'TEPR (mm)', color = ' ', fill = ' ') +
+  theme(legend.position = c(.4, .9), legend.background = element_rect(fill = "transparent")) +
+  facet_grid( ~ RT_group)
+# Inlay
+bw_inlay_dat = ddply(subset(pupildat_SET_ACC1_bad, rel.time >= 5.5 & rel.time <= 6), .(Subject, span, ACC_group, RT_group), summarize,
+      pupil4 = mean(rel.pupil, na.rm = T))
+gg_wfs_inlay = ggplot(bw_inlay_dat, aes(span, pupil4, fill = span)) +
+  theme_bw() +
+  stat_summary(fun.y = mean, geom = 'bar') +
+  stat_summary(fun.data = mean_se, geom = 'pointrange') +
+  scale_fill_brewer(palette = "RdYlBu") +
+  labs(x = "", y = "Pupil dilation Item4") +
+  theme(legend.position = "none") +
+  facet_grid( ~ RT_group)
+
+### Save figures
+if (ggsave_figures) {
+  plot(gg_better_worse_pupils)
+  plot(gg_fast_slow_pupils)
+  plot(gg_better_fast_slow_pupils)
+  plot(gg_bw_inlay)
+  plot(gg_fs_inlay)
+  plot(gg_bfs_inlay)
+  ggsave(plot = gg_better_worse_pupils, paste(figure_dir, "/gg_better_worse_pupils.png", sep = ""), width = 9, height = 5)
+  ggsave(plot = gg_fast_slow_pupils, paste(figure_dir, "/gg_fast_slow_pupils.png", sep = ""), width = 9, height = 5)
+  ggsave(plot = gg_better_fast_slow_pupils, paste(figure_dir, "/gg_better_fast_slow_pupils.png", sep = ""), width = 9, height = 5)
+  ggsave(plot = gg_bw_inlay, paste(figure_dir, "/gg_bw_inlay.png", sep = ""), width = 3, height = 2.5)
+  ggsave(plot = gg_fs_inlay, paste(figure_dir, "/gg_fs_inlay.png", sep = ""), width = 3, height = 2.5)
+  ggsave(plot = gg_bfs_inlay, paste(figure_dir, "/gg_bfs_inlay.png", sep = ""), width = 3, height = 2.5)
+}
+
+
+# idea: plot RT_bin ~ span.L + span.Q
+
+# trialwise_above = merge(trialwise_perf, subjwise_perf_set, by = c("Subject", "set", "span"), suff = c("", "_span"))
+# trialwise_above = subset(trialwise_above, compared_ACC == "above")
+# subjwise_above  = ddply(trialwise_above, .(Subject, set, span), summarize,
+#                         RT = mean(RT, na.rm = T))
+# spanwise_above  = ddply(subjwise_above, .(set, span), summarize,
+#                         mean_RT   = mean(RT, na.rm = T),
+#                         median_RT = median(RT, na.rm = T))
+# subjwise_above  = merge(subjwise_above, spanwise_above, by = c("set", "span"))
+trialwise_above = merge(trialwise_perf, subjwise_SET_perf, by = c("Subject"), suff = c("", "_span"))
+trialwise_above = subset(trialwise_above, ACC_group == "96-100%")
+subjwise_above  = ddply(trialwise_above, .(Subject, set, span), summarize,
+                        RT = mean(RT, na.rm = T))
+spanwise_above  = ddply(subjwise_above, .(set, span), summarize,
+                        mean_RT   = mean(RT, na.rm = T),
+                        median_RT = median(RT, na.rm = T))
+subjwise_above  = merge(subjwise_above, spanwise_above, by = c("set", "span"))
+subjwise_above$compared_RT  = NA
+subjwise_above$compared_RT  = "slow"
+subjwise_above$compared_RT[subjwise_above$RT < subjwise_above$median_RT] = "fast"
+subjwise_above$compared_RT  = factor(subjwise_above$compared_RT, levels = c("slow", "middle", "fast"))
+# summary(subjwise_above)
+pupildat_rt = merge(pupildat, subjwise_above, by = c("Subject", "set", "span"), suff = c("", "_span"), all.x = T, sort = F)
+pupildat_rt = subset(pupildat_rt, ACC == 1)
+# Only divide the group above average on ACC into two separate RT groups
+compare_RT_plot = ggplot(pupildat_rt, aes(rel.time, rel.pupil, color = span, fill = span)) +
+  stat_summary(fun.y = mean, geom = 'point') +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = 'smooth', alpha = 0.2) +
+  scale_color_manual(values = span_colors(4)) +
+  scale_fill_manual(values = span_colors(4)) +
+  labs(x = 'Time (s)', y = 'TEPR (mm)', color = ' ', fill = ' ') +
+  facet_grid(set ~ compared_RT) +
+  theme(legend.position = c(.3, .95), legend.justification = c(x, y), legend.background = element_rect(fill = "transparent"))
+
+if (ggsave_figures) {
+  plot(compare_RT_plot)
+  ggsave(plot = compare_RT_plot, paste(figure_dir, "/Figure5Sc_.png", sep = ""), width = 9, height = 5)
+}
+
+### Add RTs
+# Add compared_perf to RT data
+# compared_perf_dat = subjwise_perf_set[,c("Subject", "set", "span", "compared_ACC")]
+# subjwise_perf_set_m = merge(subjwise_perf_set, compared_perf_dat, by = c("Subject", "set", "span"), all.x = T, sort = F)
+# 
+# source("FUNCTIONS/mean.cl.boot.R")
+# RT_data = ddply(subjwise_perf_set_m, .(set, compared_ACC, span), summarize,
+#                 RT_mean  = mean.cl.boot(RT, B = 2000, tr = .1)[1],
+#                 RT_lower = mean.cl.boot(RT, B = 2000, tr = .1)[2],#quantile(RT, probs = .05, na.rm = T),#sd(RT)/sqrt(length(RT))#
+#                 RT_upper = mean.cl.boot(RT, B = 2000, tr = .1)[3])#quantile(RT, probs = .95, na.rm = T))
+# RT_data$RT_mean  = 6 + RT_data$RT_mean/1000
+# RT_data$RT_lower = 6 + RT_data$RT_lower/1000
+# RT_data$RT_upper = 6 + RT_data$RT_upper/1000
+# RT_data = subset(RT_data, set == "SET")
+# 
+# # Location of RTs in plot
+# rtbox = 0
+# dist = .004
+# RT_data$y = c(rtbox - 3*dist, rtbox - 2*dist, rtbox - dist, rtbox)
+# RT_data_long = melt(RT_data, id.vars = c("set", "compared_ACC", "span", "y"))
+# 
+# # Add RTs and box around RTs to the plot
+# compare_ACC_plot = compare_ACC_plot +
+#   geom_point(data = RT_data, aes(x = RT_mean, y = y, color = span), inherit.aes = F) +
+#   geom_line(data = subset(RT_data_long, variable %in% c("RT_lower", "RT_upper")), aes(x = value, y = y)) +
+#   geom_rect(aes(xmin = 6, xmax = 7.5, ymin = (rtbox - 4*dist), ymax = rtbox + dist), color = "black", fill = "transparent", inherit.aes = F) +
+#   facet_grid(~ compared_ACC)
+# compare_ACC_plot
+# detach("package:Hmisc", unload = T)
+# detach("package:ggplot2", unload = T)
+
+# mean_ACC_cutoffs = round(subset(perf_means_set, set == "SET")$mean_ACC, 2)
+# mean_RT_cutoffs  = round(subset(perf_means_set, set == "SET")$mean_RT,  2)
+```
+
+
+### Do subjects who do well at noSETs show larger pupil dilations for oddballs?
+
+```{r, echo = F, warning = F, message = F, fig.cap = "Statistics on pupil dilation: Differences between spans over time"}
+### Calculate the blue dots
+## Add participants' noSET performance for each span ("above", "below") to BOTH SETs AND noSETs, so that SETs and noSETs from the same participants will end up in the same panels
+
+pupildat_m_ACC1 = merge(subset(pupildat, ACC == 1, select = c("Subject", "set", "span", "oddball", "rel.time", "rel.pupil")),
+                                     subset(gdat, select = c("Subject", "ppg")))
+
+oddball_noSET_pupildat = merge(pupildat_m_ACC1,
+                               subset(ddply(subjwise_perf_set, .(Subject, set), summarize, ACC = mean(ACC)), set == "noSET", select = c("Subject", "ACC")),
+                               by = c("Subject"), all.x = T)
+# mean_noSET_ACC = mean(subset(subjwise_perf_set, set == "noSET")$ACC)
+# median_noSET_ACC = median(subset(subjwise_perf_set, set == "noSET")$ACC)
+# ddply(subjwise_perf_set, .(set, span), summarize, ACC = mean(ACC))
+half_noSET_ACC = .95
+oddball_noSET_pupildat$compared_ACC = "below"
+oddball_noSET_pupildat$compared_ACC[oddball_noSET_pupildat$ACC > half_noSET_ACC] = "above"
+
+#3-span: 19 are == 1; 20 are == .9; 24 are < .9
+#2-span: 44 are == 1; 19 are < 1
+#1-span: 39 are == 1; 24 are < 1
+#0-span: 47 are == 1; 16 are < 1
+
+subjwise_perf_set$compared_ACC2 = "100%"
+subjwise_perf_set$compared_ACC2[subjwise_perf_set$ACC < 1] = "< 100%"
+subjwise_perf_set$compared_ACC2[subjwise_perf_set$ACC == .9 & subjwise_perf_set$span == "3span"] = "3-span 90%"
+subjwise_perf_set$compared_ACC2 = factor(subjwise_perf_set$compared_ACC2, levels = c("< 100%", "3-span 90%", "100%"))
+
+oddball_noSET_pupildat = merge(pupildat_m_ACC1,
+                               subset(subjwise_perf_set, set == "noSET", select = c("Subject", "span", "compared_ACC2")),
+                               by = c("Subject", "span"), all.x = T)
+
+noSET_ab_statsdat = merge(subset(allfiles_ACC1, select = c("Subject", "oddball", "span", "TrialId", "ACC", "RT", "bin_time", "rel_pupil")),
+                          subset(subjwise_perf_set, set == "noSET", select = c("Subject", "span", "compared_ACC2")),
+                          by = c("Subject", "span"), all.x = T)
+
+noSET_ab_regression = data.frame(compared_ACC = NA, effect = NA, rel.time = NA, beta = NA, sig = NA, se = NA, t = NA, p = NA)[0,]
+row = 1
+if (preprocess_data) {
+  for (perf in c("above", "below")) {
+    for (bin in as.numeric(as.character(levels(factor(noSET_ab_statsdat$bin_time))))) {
+      # only run for datasets that don't crash lme
+      # if (!(spa == "1span" & bin == 0.45) & !(spa == "2span" & bin == 1.05) & !(spa == "3span" & bin == 1.05)) {
+        bin_dat = subset(noSET_ab_statsdat, span != "0span" & bin_time == bin & compared_ACC == perf, select = c("Subject", "oddball", "ACC", "span", "rel_pupil"))
+        
+        ### Calculate the regression beta values for linear, quadr, and 0vs123 relationships
+        # Create polynomial contrasts
+        SETvsnoSETs = c(-2, 1, 1)
+        noSET3vsnoSET4 = c(0, -1, 1)
+        contrasts(bin_dat$oddball) = cbind(SETvsnoSETs, noSET3vsnoSET4)
+          
+        # Create baseline model and span model (with contrasts) and compare them
+        baselineModel = lme(rel_pupil ~ 1, random = ~1|Subject/oddball, data = bin_dat, method = "ML", na.action = na.omit)
+        oddModel = update(baselineModel, .~. + oddball)
+        ModelAov = anova(baselineModel, oddModel)
+        
+        # Get the beta values for each contrast and it to the dataframe pupildat_regression
+        beta_SnS = summary(oddModel)$tTable[2]
+        beta_n34 = summary(oddModel)$tTable[3]
+        se_SnS   = summary(oddModel)$tTable[5]
+        se_n34   = summary(oddModel)$tTable[6]
+        t_SnS    = summary(oddModel)$tTable[11]
+        t_n34    = summary(oddModel)$tTable[12]
+        p_SnS    = summary(oddModel)$tTable[14]
+        p_n34    = summary(oddModel)$tTable[15]
+        sig_SnS  = "ns."; if (p_SnS <= 0.05) {sig_SnS = "sig."}
+        sig_n34  = "ns."; if (p_n34 <= 0.05) {sig_n34 = "sig."}
+        
+        noSET_ab_regression[row,]   = c(perf, "SET vs noSET",       bin, beta_SnS, sig_SnS, se_SnS, t_SnS, p_SnS)
+        noSET_ab_regression[row+1,] = c(perf, "noSET-3 vs noSET-4", bin, beta_n34, sig_n34, se_n34, t_n34, p_n34)
+        
+        ### Move into the next row of the dataframe
+        row = row + 2
+      # }
+    }
+  }
+  write.csv(noSET_ab_regression, "noSET_ab_regression.csv")
+  
+  noSET_ab_regression$rel.time = as.numeric(as.character(noSET_ab_regression$rel.time))
+  noSET_ab_regression$beta = as.numeric(as.character(noSET_ab_regression$beta))
+  noSET_ab_regression$se = as.numeric(as.character(noSET_ab_regression$se))
+  noSET_ab_regression$p = as.numeric(as.character(noSET_ab_regression$p))
+  noSET_ab_regression$t = as.numeric(as.character(noSET_ab_regression$t))
+  noSET_ab_regression$effect = factor(noSET_ab_regression$effect, levels = c("SET vs noSET", "noSET-3 vs noSET-4"), labels = c("noSET-SET", "noSET4-noSET3"))
+  noSET_ab_regression$compared_ACC = factor(noSET_ab_regression$compared_ACC, levels = c("below", "above"))
+  
+  ### Plot Regression weights over time
+  # Set up plot basics
+  # resp_fix_labels = data.frame(x = c(6.7, 8), y = rep(-0.03, 2), label = c("Resp.", "Fix."))
+  pupil_effect_plot10 = ggplot(noSET_ab_regression, aes(rel.time, beta, color = effect, shape = sig, group = effect)) +
+    geom_tile(data = tile_data, aes(x = x, y = y, width = width, height = height), inherit.aes = F, fill = "white") +
+    geom_vline(xintercept = response_prompt_time, size = 1.5) +
+    geom_hline(yintercept = 0) +
+    geom_text(data = tile_data, aes(x = x, y = -0.03, label = labels), inherit.aes = F) +
+    geom_text(data = resp_fix_labels, aes(x = x, y = y, label = label), inherit.aes = F) +
+    labs(x = 'Time (s)', y = 'beta weight', color = ' ', shape = ' ') +
+    # theme(legend.position = c(0, 1)) +
+    scale_x_continuous(breaks = seq(0, 9, 1.5))
+  # Add the data
+  pupil_effect_plot10 = pupil_effect_plot10 +
+    geom_point() +
+    geom_line() +
+    scale_shape_manual(values = c(1, 16)) +
+    scale_color_brewer(type = "qual") +
+    geom_pointrange(aes(ymax = beta + 1.96*se, ymin = beta - 1.96*se), alpha = .6) +
+    facet_grid(~ compared_ACC)
+  
+  if (ggsave_figures) {
+    plot(pupil_effect_plot10)
+    ggsave(plot = pupil_effect_plot10, paste(figure_dir, "/Figure4d_.png", sep = ""), width = 10, height = 5)
+  }
+} else {
+  # noSET_ab_regression = read.csv("noSET_ab_regression.csv")
+}
+```
+
+```{r, echo = F, warning = F, message = F, fig.height = 5, fig.width = 8, fig.cap = "Pupil dilation during correctly answered noSET trials for subjects performing above and below average in each span (except 0-span, in which all subjects showed VOE responses, as expected). Subjects performing above average (right panels) show consistent pupillary signs of surprise after the presentation of rule-violating items. When the third item in a trial violates the SET rules (orange lines), pupil dilation is larger during the third item and when the fourth item violates the rules (red lines), pupil dilation is larger during the fourth item. In addition, pupil dilation decreases for the fourth item when the third was a rule-violating item. Subjects performing below average, on the contrary, show no pupillary signs of surprise when the third item in a trial violates the rules (except in the purely perceptual 0-span condition). These subjects do, however show pupillary surprise when the fourth item violates the rule. Coloured shaded areas indicate SEMs. Division of subjects into above average and below average is independent for each span."}
+
+### Set up plot basics
+# resp_fix_labels = data.frame(x = c(6.7, 8), y = rep(-0.03, 2), label = c("Resp.", "Fix."))
+noSET_ab_plot = ggplot(subset(oddball_noSET_pupildat, span != "0span" & compared_ACC2 != "3-span 90%"), aes(rel.time, rel.pupil, color = oddball, fill = oddball)) +
+  geom_tile(data = tile_data, aes(x = x, y = y, width = width, height = height), inherit.aes = F, fill = "white") +
+  geom_vline(xintercept = response_prompt_time, size = 1.5) +
+  geom_text(data = tile_data, aes(x = x, y = -0.03, label = labels), inherit.aes = F) +
+  geom_text(data = resp_fix_labels, aes(x = x, y = y, label = label), inherit.aes = F) +
+  labs(x = 'Time (s)', y = 'Pupil dilation (mm)', color = ' ', fill = ' ') +
+  theme(legend.position = c(.05, .8), legend.background = element_rect(fill = "transparent")) +
+  scale_x_continuous(breaks = seq(0, 9, 1.5)) +
+  facet_grid( ~ compared_ACC2)
+
+### Add pupil dilation
+noSET_ab_plot = noSET_ab_plot +
+  stat_summary(fun.y = mean, geom = 'point') +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = 'smooth', alpha = 0.2) +
+  scale_color_manual(values = oddball_colors) +
+  scale_fill_manual(values = oddball_colors)
+
+if (ggsave_figures) {
+  plot(noSET_ab_plot)
+  ggsave(plot = noSET_ab_plot, paste(figure_dir, "/Figure5Sd_.png", sep = ""), width = 9, height = 5)
+}
+### Add statistic dots
+# subs = subset(noSET_ab_regression, sig == "sig.")
+# subs$y = 0.18; subs$y[subs$effect == "noSET-SET"] = 0.185
+# sub_lab = data.frame(x = 0.5, y = c(0.185, 0.18), labels = c("noSET-SET", "noSET4-noSET3"), compared_ACC = "below")
+# noSET_ab_plot = noSET_ab_plot +
+#   geom_point(data = subs, inherit.aes = F, aes(x = rel.time, y = y), color = "blue") +
+#   geom_text(data = sub_lab, inherit.aes = F, aes(x = x, y = y, label = labels), size = 2.5)
+
+### Add response times
+perf_means_odd = ddply(subjwise_perf_oddball, .(oddball, span), summarize,
+                       mean_ACC   = mean(ACC))
+subjwise_perf_oddball = merge(subjwise_perf_oddball, perf_means_odd, by = c("oddball", "span"), all.x = T, sort = F)
+subjwise_perf_oddball$compared_ACC = NA
+subjwise_perf_oddball$compared_ACC = "above"
+subjwise_perf_oddball$compared_ACC[subjwise_perf_oddball$ACC < subjwise_perf_oddball$mean_ACC] = "below"
+subjwise_perf_oddball$compared_ACC = factor(subjwise_perf_oddball$compared_ACC, levels = c("below", "middle", "above"))
+
+RT_data_ab = ddply(subset(subjwise_perf_oddball, span != "0span"), .(oddball, compared_ACC), summarize,
+                RT_mean  = mean.cl.boot(RT, B = 2000, tr = .1)[1],
+                RT_lower = mean.cl.boot(RT, B = 2000, tr = .1)[2],
+                RT_upper = mean.cl.boot(RT, B = 2000, tr = .1)[3])
+RT_data_ab$RT_mean  = 6 + RT_data_ab$RT_mean/1000
+RT_data_ab$RT_lower = 6 + RT_data_ab$RT_lower/1000
+RT_data_ab$RT_upper = 6 + RT_data_ab$RT_upper/1000
+# Location of RTs in plot
+rtbox = 0
+dist = .004
+RT_data_ab$y = c(rep(rtbox-2*dist, 2), rep(rtbox-dist, 2), rep(rtbox, 2))
+RT_data_ab_long = melt(RT_data_ab, id.vars = c("compared_ACC", "oddball", "y"))
+# Add RTs and box around RTs to the plot
+noSET_ab_plot = noSET_ab_plot +
+  geom_point(data = RT_data_ab, aes(x = RT_mean, y = y, color = oddball), inherit.aes = F) +
+  geom_line(data = subset(RT_data_ab_long, variable %in% c("RT_lower", "RT_upper")), aes(x = value, y = y)) +
+  geom_rect(aes(xmin = 6, xmax = 7, ymin = (rtbox - 3*dist), ymax = rtbox + dist), color = "black", fill = "transparent", inherit.aes = F)
+
+if (ggsave_figures) {
+  plot(noSET_ab_plot)
+  ggsave(plot = noSET_ab_plot, paste(figure_dir, "/Figure5Sd_.png", sep = ""), width = 9, height = 5)
+}
+```
+
+## Does pupil dilation differ between correct and incorrect trials?
+
+### SET trials
+
+```{r, echo = F, warning = F, message = F}
+
+# ### Prepare data
+# correct_incorrect_SET = subset(pupildat, span_ACC < 1 & set =="SET")
+# correct_incorrect_SET = ddply(correct_incorrect_SET, .(Subject, ACC, ACC_fac, set, span, rel.time), summarize,
+#                               rel.pupil = mean(rel.pupil, na.rm = T),
+#                               abs.pupil = mean(abs.pupil, na.rm = T))
+# 
+# ### Ggplot
+# x = 0; y = 1; text.size = 3
+# corr_incorr_SET_plot = ggplot(correct_incorrect_SET, aes(rel.time, rel.pupil, color = ACC_fac, fill = ACC_fac)) +
+#   stat_summary(fun.y = mean, geom = 'point') +
+#   stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = 'smooth', mult = 1, alpha = 0.2) +
+#   scale_color_manual(values = span_colors(2)) +
+#   scale_fill_manual(values = span_colors(2)) +
+#   labs(x = 'Time (s)', y = 'Abs. dilation (mm)', color = ' ', fill = ' ') +
+#   theme(legend.position = c(x, y), legend.justification = c(x, y), legend.background = element_rect(fill = "transparent"))
+
+```
+
+## The old SETnoSET Plot
+
+## Pupil dilation during item presentation and response
+
+```{r, echo = F, warning = F, message = F, fig.cap = "Statistics on pupil dilation: Differences between spans over time"}
+# library("nlme")
+pupildat_regression = data.frame(oddball = NA, effect = NA, rel.time = NA, beta = NA, sig = NA, se = NA, t = NA, p = NA)[0,]
+# pupildat_anova      = data.frame(oddball = NA, rel.time = NA, sig = NA, F = NA, p = NA)[0,]
+row = 1
+
+allfiles_ACC1 = subset(allfiles, ACC == 1)
+
+if (preprocess_data) {
+  for (oddb in unique(allfiles_ACC1$oddball)) {
+    for (bin in as.numeric(as.character(unique(allfiles_ACC1$bin_time)))) {
+      bin_dat = subset(allfiles_ACC1, oddball == oddb & bin_time == bin, select = c("Subject", "oddball", "ACC", "span", "rel_pupil"))
+      
+      ### Calculate the regression beta values for linear, quadr, and 0vs123 relationships
+      # Create polynomial contrasts
+      contrasts(bin_dat$span) = contr.poly(4)
+      contrasts(bin_dat$span)[5:8] = c(-0.5, 0.5, 0.5, -0.5)
+        
+      # Create baseline model and span model (with contrasts) and compare them
+      baselineModel = lme(rel_pupil ~ 1, random = ~1|Subject/span, data = bin_dat, method = "ML", na.action = na.omit)
+      spanModel = update(baselineModel, .~. + span)
+      ModelAov = anova(baselineModel, spanModel)
+      
+      # Get the beta values for each contrast and it to the dataframe pupildat_regression
+      beta_lin = summary(spanModel)$tTable[2]
+      beta_qua = summary(spanModel)$tTable[3]
+      beta_cub = summary(spanModel)$tTable[4]
+      se_lin   = summary(spanModel)$tTable[6]
+      se_qua   = summary(spanModel)$tTable[7]
+      se_cub   = summary(spanModel)$tTable[8]
+      t_lin    = summary(spanModel)$tTable[14]
+      t_qua    = summary(spanModel)$tTable[15]
+      t_cub    = summary(spanModel)$tTable[16]
+      p_lin    = summary(spanModel)$tTable[18]
+      p_qua    = summary(spanModel)$tTable[19]
+      p_cub    = summary(spanModel)$tTable[20]
+      sig_lin  = "ns."; if (p_lin <= 0.05) {sig_lin = "sig."}
+      sig_qua  = "ns."; if (p_qua <= 0.05) {sig_qua = "sig."}
+      sig_cub  = "ns."; if (p_cub <= 0.05) {sig_cub = "sig."}
+  
+      pupildat_regression[row,]   = c(oddb, "linear",    bin, beta_lin, sig_lin, se_lin, t_lin, p_lin)
+      pupildat_regression[row+1,] = c(oddb, "quadratic", bin, beta_qua, sig_qua, se_qua, t_qua, p_qua)
+      pupildat_regression[row+2,] = c(oddb, "cubic",     bin, beta_cub, sig_cub, se_cub, t_cub, p_cub)
+      
+      ### Calculate the anova (does not work because "One or more cells is missing data. Try using ezDesign() to check your data." Sometimes, some spans have more values than others)
+      # bin_anova = ezANOVA(data = subset(bin_dat, !is.na(rel_pupil)), dv = rel_pupil, wid = Subject, within = .(span))
+      
+      ### Move into the next row of the dataframe
+      row = row + 3
+    }
+  }
+  write.csv(pupildat_regression, "pupildat_nb_regression.csv")
+} else {
+  pupildat_regression = read.csv("pupildat_nb_regression.csv")
+}
+
+pupildat_regression$rel.time = as.numeric(as.character(pupildat_regression$rel.time))
+pupildat_regression$beta = as.numeric(as.character(pupildat_regression$beta))
+pupildat_regression$se = as.numeric(as.character(pupildat_regression$se))
+pupildat_regression$p = as.numeric(as.character(pupildat_regression$p))
+pupildat_regression$t = as.numeric(as.character(pupildat_regression$t))
+pupildat_regression$effect = factor(pupildat_regression$effect, levels = c("linear", "quadratic", "cubic"))
+pupildat_regression$oddball = factor(pupildat_regression$oddball, levels = c("SET", "noSET-3", "noSET-4"))
+
+### Plot 1: Regression weights over time
+# Set up plot basics
+pupil_effect_plot1 = ggplot(pupildat_regression, aes(rel.time, beta, color = effect, shape = sig, group = effect)) +
+  geom_tile(data = tile_data, aes(x = x, y = y, width = width, height = height), inherit.aes = F, fill = "white") +
+  geom_vline(xintercept = response_prompt_time, size = 1.5) +
+  geom_text(data = tile_data, aes(x = x, y = -0.03, label = labels), inherit.aes = F) +
+  geom_text(data = resp_fix_labels, aes(x = x, y = y, label = label), inherit.aes = F) +
+  labs(x = 'Time (s)', y = 'beta weight', color = ' ') +
+  scale_x_continuous(breaks = seq(0, 9, 1.5))
+# Add the data
+pupil_effect_plot1 = pupil_effect_plot1 +
+  geom_point() +
+  geom_line() +
+  scale_shape_manual(values = c(1, 16)) +
+  scale_color_brewer(direction = -1, palette = 1) +
+  geom_pointrange(aes(ymax = beta + 1.96*se, ymin = beta - 1.96*se), alpha = .6) +
+  facet_grid(~ oddball)
+
+pupil_effect_plot2 = ggplot(pupildat_regression, aes(rel.time, beta, color = oddball, shape = sig, group = oddball)) +
+  theme(panel.background = element_rect(fill = "lightgrey")) +
+  geom_tile(data = tile_data, aes(x = x, y = y, width = width, height = height), inherit.aes = F, fill = "white") +
+  geom_point() +
+  geom_line() +
+  scale_shape_manual(values = c(1, 16)) +
+  scale_color_manual(values = oddball_colors) +
+  geom_pointrange(aes(ymax = beta + 1.96*se, ymin = beta - 1.96*se), alpha = .3) +
+  theme(legend.position = c(1,1)) +
+  geom_vline(xintercept = response_prompt_time) +
+  facet_grid(~ effect)
+  
+if (ggsave_figures) {
+  plot(pupil_effect_plot1)
+  ggsave(plot = pupil_effect_plot1, paste(figure_dir, "/Figure5b_nb_.png", sep = ""), width = 12, height = 5)
+}
+```
+
+```{r, echo = F, warning = F, message = F, fig.height = 5, fig.width = 10, fig.cap = "Time course of pupil dilation over the complete trial, averaged for correctly answered SETs and noSETs (numbers in parentheses indicate position of the rule-violating item, also highlighted in red); inlets show response times. Greener colors indicate lower spans and reder colors indicate higher spans. Pupil dilation increased linearly from one item to the next, reflecting the increasing load on working memory as more items are hold in mind. Pupil dilation also differed between the four spans; we will return to these differences later. Lastly, SETs, noSET(3)'s and noSET(4)'s elicited different patterns of pupil dilation, showing that the presentation of rule-violating items had an impact on cognitive processing. Pupil dilation differences emerged as soon as the second item was presented, which determines the span of the SET, and persisted throughout the response (Resp.) and fixation periods (Fix.). Methodological comments: Pupil dilation is indicated relative to trial baseline. Coloured shaded areas represent 95%-confidence intervals of the dilation. For response times, means (circles) and 95%-confidence intervals (lines) were bootstrapped (for more details about the bootstrapping, see descriptions in next figure). Please also note that confidence intervals are much larger for noSETs than for SETs, mostly overlapping in the former; the reason is the amount of data: Each subjects worked on 40 SETs, but only 20 noSETs of each type."}
+
+### Prepare data
+SETnoSET_pupildat = subset(pupildat, ACC == 1)
+SETnoSET_allfiles = subset(allfiles, ACC == 1)
+
+### Set up plot basics
+x = 0.75; y = 1
+red_tiles = subset(tile_data, labels %in% c("Item3", "Item4"))
+red_tiles$oddball = c("noSET-3", "noSET-4")
+SETnoSET_plot = ggplot(SETnoSET_pupildat, aes(rel.time, rel.pupil, color = span, fill = span)) +
+  geom_tile(data = tile_data, aes(x = x, y = y, width = width, height = height), inherit.aes = F, fill = "white") +
+  geom_tile(data = red_tiles, aes(x = x, y = y, width = width, height = height), inherit.aes = F, fill = "lightsalmon", alpha = 0.5) +
+  geom_vline(xintercept = response_prompt_time, size = 1.5) +
+  geom_text(data = tile_data, aes(x = x, y = -0.03, label = labels), inherit.aes = F) +
+  geom_text(data = resp_fix_labels, aes(x = x, y = y, label = label), inherit.aes = F) +
+  labs(x = 'Time (s)', y = 'Pupil dilation (mm)', color = ' ', fill = ' ') +
+  theme(legend.position = c(x, y), legend.justification = c(x, y), legend.background = element_rect(fill = "transparent")) +
+  scale_x_continuous(breaks = seq(0, 9, 1.5)) +
+  facet_grid(~ oddball)
+
+### Add pupil dilation
+SETnoSET_plot = SETnoSET_plot +
+  stat_summary(fun.y = mean, geom = 'point') +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = 'smooth', alpha = 0.2) +
+  scale_color_manual(values = span_colors(4)) +
+  scale_fill_manual(values = span_colors(4), guide = FALSE)
+
+### Add blue statistic dots
+# subs = subset(pupildat_regression, sig == "sig." & effect %in% c("linear", "quadratic"))
+# subs$y = 0.19; subs$y[subs$effect == "quadratic"] = 0.185
+# sub_lab = data.frame(x = 0.5, y = c(0.19, 0.185), labels = c("lin.", "quadr."), oddball = "SET")
+# SETnoSET_plot = SETnoSET_plot +
+#   geom_point(data = subs, inherit.aes = F, aes(x = rel.time, y = y), color = "blue") +
+#   geom_text(data = sub_lab, inherit.aes = F, aes(x = x, y = y, label = labels), size = 2.5) +
+#   facet_grid(~ oddball)
+
+### Add response times
+# RT data in the right formats
+# source("FUNCTIONS/mean.cl.boot.R")
+RT_data = ddply(subjwise_perf_oddball, .(oddball, set, span), summarize,
+                RT_mean = mean.cl.boot(RT, B = 2000, tr = .1)[1],
+                RT_lower = mean.cl.boot(RT, B = 2000, tr = .1)[2],
+                RT_upper = mean.cl.boot(RT, B = 2000, tr = .1)[3])
+RT_data$RT_mean = 6 + RT_data$RT_mean/1000
+RT_data$RT_lower = 6 + RT_data$RT_lower/1000
+RT_data$RT_upper = 6 + RT_data$RT_upper/1000
+# Location of RTs in plot
+rtbox = 0
+dist = .004
+RT_data$y = c(rtbox - 3*dist, rtbox - 2*dist, rtbox - dist, rtbox)
+RT_data_long = melt(RT_data, id.vars = c("set", "span", "oddball", "y"))
+# Add RTs and box around RTs to the plot
+SETnoSET_plot = SETnoSET_plot +
+  geom_point(data = RT_data, aes(x = RT_mean, y = y, color = span), inherit.aes = F) +
+  geom_line(data = subset(RT_data_long, variable %in% c("RT_lower", "RT_upper")), aes(x = value, y = y)) +
+  geom_rect(aes(xmin = 6, xmax = 7, ymin = (rtbox - 4*dist), ymax = rtbox + dist), color = "black", fill = "transparent", inherit.aes = F) +
+  facet_grid(~ oddball)
+
+### Show the plot and save
+if (ggsave_figures) {
+  plot(SETnoSET_plot)
+  ggsave(plot = SETnoSET_plot, paste(figure_dir, "/oldFigure5_nb_.png", sep = ""), width = 12, height = 5)
+}
+```
+
+```{r, echo = F, warning = F, message = F, fig.cap = "Pupil dilation over the course of a trial for each subject."}
+every_subj_pupil_dilation =
+  ggplot(SETnoSET_pupildat, aes(rel.time, rel.pupil, color = span, fill = span)) +
+    stat_summary(fun.y = mean, geom = 'point') +
+    stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = 'smooth', alpha = 0.2) +
+    scale_color_manual(values = span_colors(4)) +
+    scale_fill_manual(values = span_colors(4), guide = FALSE) +
+    labs(x = 'Time (s)', y = 'TEPR (mm)', color = ' ', fill = ' ') +
+    coord_cartesian(ylim = c(-0.5, 1)) +
+    theme(legend.position = c(x, y), legend.justification = c(x, y), legend.background = element_rect(fill = "transparent")) +
+    facet_wrap(oddball ~ Subject, ncol = 11)
+```
+
+### Statistical tests
+
+```{r, echo = F, warning = F, message = F}
+### Prepare data
+# SETnoSET_allfiles$position = NA
+# SETnoSET_allfiles$position[SETnoSET_allfiles$bin_time > 1 & SETnoSET_allfiles$bin_time <= 1.5] = 1
+# SETnoSET_allfiles$position[SETnoSET_allfiles$bin_time > 2.5 & SETnoSET_allfiles$bin_time <= 3] = 2
+# SETnoSET_allfiles$position[SETnoSET_allfiles$bin_time > 4 & SETnoSET_allfiles$bin_time <= 4.5] = 3
+# SETnoSET_allfiles$position[SETnoSET_allfiles$bin_time > 5.5 & SETnoSET_allfiles$bin_time <= 6] = 4
+# SETnoSET_allfiles$position[SETnoSET_allfiles$bin_time > 7 & SETnoSET_allfiles$bin_time <= 7.5] = "resp"
+# SETnoSET_allfiles = subset(SETnoSET_allfiles, !is.na(position) & position %in% c(1, 2, 3, 4))
+# SETnoSET_allfiles$position = factor(SETnoSET_allfiles$position)
+# SETnoSET_allfiles$oddball[is.na(SETnoSET_allfiles$oddball)] = "SET"
+# SETnoSET_allfiles$oddball = factor(SETnoSET_allfiles$oddball, labels = c("SET", "3", "4"), levels = c("SET", "3", "4"))
+# SETnoSET_allfiles_stats = ddply(SETnoSET_allfiles, .(Subject, TrialId, oddball, set, span, position, ACC), summarize,
+#                                 roll_pupil = mean(roll_pupil, na.rm = T),
+#                                 rel_pupil = mean(rel_pupil, na.rm = T))
+# 
+# ### Create the models
+# if (run_regression_models) {
+#   ### The small model
+#   # Contrasts
+#   contrasts(SETnoSET_allfiles_stats$position) = contr.poly(4)
+#   contrasts(SETnoSET_allfiles_stats$span)     = contr.poly(4)
+#   # Model
+#   baseline_mod = lme(rel_pupil ~ 1, random = ~1|Subject/span/position, data = subset(SETnoSET_allfiles_stats, set == "SET"), method = "ML", na.action = na.omit)
+#   pos_mod      = update(baseline_mod, .~. + position)
+#   span_mod     = update(baseline_mod, .~. + position + span)
+#   pos_span_mod = update(baseline_mod, .~. + position * span)
+#   
+#   SETnoSET_model = anova(baseline_mod,
+#                          pos_mod, span_mod,
+#                          pos_span_mod)
+# 
+#   ### The immense model
+#   # More contrasts
+#   SETvsnoSETs   = c(-2,  1,  1)
+#   noSET3vsnoSET4= c( 0, -1,  1)
+#   contrasts(SETnoSET_allfiles_stats$oddball)  = cbind(SETvsnoSETs, noSET3vsnoSET4)
+#   # Model
+#   baseline_mod_ = lme(rel_pupil ~ 1, random = ~1|Subject/oddball/span/position, data = SETnoSET_allfiles_stats, method = "ML", na.action = na.omit)
+#   trial_mod_    = update(baseline_mod_, .~. + TrialId)#, control = lmeControl(opt = "optim"))
+#   pos_mod_      = update(baseline_mod_, .~. + TrialId + position)
+#   span_mod_     = update(baseline_mod_, .~. + TrialId + position + span)
+#   pos_span_mod_ = update(baseline_mod_, .~. + TrialId + position * span)
+#   odd_mod_      = update(pos_span_mod_, .~. + oddball)
+#   odd_pos_span_mod_ = update(pos_span_mod_, .~. + oddball:position:span)
+#   
+#   SETnoSET_model_ = anova(baseline_mod_,
+#                               trial_mod_, pos_mod_, span_mod_,
+#                               pos_span_mod_,
+#                               odd_mod_,
+#                               odd_pos_span_mod_)
+# }
+```
+
+
+#### Statistical tests (classification with machine learning)
+
+```{r, echo = F, results = F, warning = F, message = F}
+## Try witch machine learning (random forests, bagging, boosting?)
+# library("caret")
+# library("reshape")
+# library("pROC")
+# library("DMwR")
+# 
+# ### Ideas:
+# # - How well can ACC be predicted at its max? (ACC ~ everything [TrialId, set, span, oddball, pupil, digit span, questionnaire, number series, amount of sleep, ...])
+# #   -> Well => We can predict performance from these-and-those things! (How important is pupil dilation? When? What else?)
+# #   -> Bad  => Can we predict span from pupil data? There is no way we can tell...
+# # - How good can spans be predicted?
+# 
+# # - compare: ACC ~ set * span * oddball * RT with ACC ~ pupil (separate for SET/noSET & spans)
+# # - better for 3span only?
+# # - better for indiv subjects?
+# # - compare classification performance with pupil data to performance with all the other data?
+# # - sets only?
+# # - predict span?
+# # - use all data, including excluded subjects?
+# # - instead of throwing pupil data out, downsample with rolling averages?
+# # - use different measures?
+# 
+# # Prepare data
+# idvar_names = c("Subject", "TrialId", "ACC", "RT", "span", "set", "oddball")#
+# subset_allfiles = subset(allfiles, select = c(idvar_names, "bin_time", "roll_pupil"))    # "roll_pupil" or "rel_pupil"? #set == "SET", 
+# subset_allfiles$oddball[is.na(subset_allfiles$oddball)] = "SET"
+# subset_allfiles$oddball = factor(subset_allfiles$oddball)
+# subset_allfiles$Subject = factor(subset_allfiles$Subject)
+# subset_allfiles$ACC = factor(subset_allfiles$ACC, levels = c(0, 1), labels = c("incorrect", "correct"))    # important to make the modls CLASSIFY instead of REGRESS
+# 
+# reshaped_allfiles = reshape(subset_allfiles, idvar = idvar_names, timevar = "bin_time", direction = "wide")
+# head(reshaped_allfiles[,1:10])
+# 
+# ### Reduce amount of pupil data (kick out columns)
+# pupil_cols = paste("roll_pupil.", seq(0, 9, 0.5), sep = "")                   # "roll_pupil" or "rel_pupil"!
+# allfiles_pupil_subs = reshaped_allfiles[,c(idvar_names, pupil_cols)]
+# 
+# ### Dummy code factor variables (maybe also done automatically?)
+# dummy_cols = c("set", "oddball", "span")
+# allfiles_dummies = dummyVars("~.", data = allfiles_pupil_subs[,dummy_cols], fullRank = F)
+# allfiles_dummy   = as.data.frame(predict(allfiles_dummies, allfiles_pupil_subs))
+# allfiles_dummy_all = cbind(allfiles_pupil_subs[,!names(allfiles_pupil_subs) %in% dummy_cols], allfiles_dummy)
+# # head(allfiles_dummy_all)
+# # allfiles_dummy_all = allfiles_pupil_subs
+# 
+# ### Split into training and testing sets
+# inTraining = createDataPartition(allfiles_dummy_all$ACC, p = 0.85, list = F)
+# train = allfiles_dummy_all[ inTraining,]
+# test  = allfiles_dummy_all[-inTraining,]
+# 
+# ### We have a rare event here (rare event < 15%)... let's invent more rare cases and discard some common ones with SMOTE!
+# # prop.table(table(train$ACC))
+# # prop.table(table(test$ACC))
+# train_SMOTE = SMOTE(ACC ~ ., train, perc.over = 200, k = 5, perc.under = 150)
+# # table(train_SMOTE$ACC)
+# # prop.table(table(train_SMOTE$ACC))
+# 
+# ### Preprocessing (impute missing values)
+# colnumbers    = 1:length(names(train))
+# factors       = colnumbers[names(train) %in% c("TrialId", "ACC", "set", "oddball", "span")]
+# pupil_col_num = colnumbers[names(train) %in% c(pupil_cols, "RT")]
+# 
+# train_PreObj  = preProcess(train_SMOTE[,pupil_col_num], method = "knnImpute")   # Remove outcome column & factor variables before
+# train_standard = cbind(train_SMOTE[,-pupil_col_num], predict(train_PreObj, train_SMOTE[,pupil_col_num]))
+# train_standard = train_standard[,colnames(train_standard) != "Subject"]
+# test_standard  = cbind(test[,-pupil_col_num], predict(train_PreObj, test[,pupil_col_num]))
+# 
+# # ### Remove highly correlated predictors
+# # colnumbers = 1:length(names(train_standard))
+# # factors    = colnumbers[names(train_standard) %in% c("Subject", "TrialId", "ACC", "set", "oddball", "span")]
+# # find_cor_train = train_standard[,-factors]
+# # find_cor_test  = test_standard[,-factors]
+# # highly_correlated_columns = findCorrelation(find_cor_train, cutoff = .9)
+# # uncor_train_data = cbind(train_standard[,factors], find_cor_train[,-highly_correlated_columns])
+# # uncor_test_data  = cbind(test_standard[,factors], find_cor_test[,-highly_correlated_columns])
+# 
+# ### Determine predictors
+# pupil_predictors = pupil_cols
+# behav_predictors = names(train_standard)[!names(train_standard) %in% c(pupil_cols, "Subject", "ACC", "TrialId")]
+# 
+# ### Set resampling of the data (cross-validate 3 times)
+# objControl = trainControl(method = 'cv', number = 5, returnResamp = 'none', summaryFunction = twoClassSummary, classProbs = TRUE)
+# 
+# ### Classification classification tree
+# modFit_rpart     = train(ACC ~ ., method = "rpart", trControl = objControl, metric = "ROC", data = train_standard)
+# # modFit_rpart_p   = train(ACC ~ ., method = "rpart", trControl = objControl, metric = "ROC", data = subset(train_standard, select = c("ACC", pupil_predictors)))
+# # modFit_rpart_b   = train(ACC ~ ., method = "rpart", trControl = objControl, metric = "ROC", data = subset(train_standard, select = c("ACC", behav_predictors)))
+# 
+# ### Classification random forest (rf)
+# modFit_rf      = train(ACC ~ ., method = "rf", trControl = objControl, metric = "ROC", data = train_standard)
+# 
+# ### Classification bagging
+# modFit_treebag = train(ACC ~ ., method = "treebag", trControl = objControl, metric = "ROC", data = train_standard)
+# 
+# ### Classification boosting
+# modFit_gbm       = train(ACC ~ ., method = "gbm", trControl = objControl, metric = "ROC", data = train_standard)
+# # modFit_gbm_p     = train(ACC ~ ., method = "gbm", trControl = objControl, metric = "ROC", data = subset(train_standard, select = c("ACC", pupil_predictors)))
+# # modFit_gbm_b     = train(ACC ~ ., method = "gbm", trControl = objControl, metric = "ROC", data = subset(train_standard, select = c("ACC", behav_predictors)))
+# 
+# ## gbm
+# # In-sample prediction error
+# gbm_predicted_values    = predict(modFit_gbm, newdata = train_standard)
+# gbm_prediction_table_in = table(gbm_predicted_values, train_standard$ACC)
+# correct_classifications_gbm = sum(diag(as.matrix(gbm_prediction_table_in)))
+# classification_errors_gbm = sum(as.matrix(gbm_prediction_table_in)) - correct_classifications_gbm
+# missclassifications = classification_errors_gbm / (classification_errors_gbm + correct_classifications_gbm)
+# # Out-of-sample prediction error
+# numberOfTestCases = nrow(test_standard)
+# # gbm_predicted_values_out = predict(modFit_gbm, newdata = test_standard)
+# # gbm_prediction_table_out = table(gbm_predicted_values_out, test_standard$ACC)
+# # correct_classifications_gbm_out = sum(diag(as.matrix(gbm_prediction_table_out)))
+# # classification_errors_gbm_out = numberOfTestCases - correct_classifications_gbm_out
+# # gbm_missclassifications_out = classification_errors_gbm_out / numberOfTestCases
+# # Results
+# # plot(varImp(modFit_gbm, scale = F))
+# # gbm_prediction_table_in
+# # gbm_prediction_table_out
+# # postResample(pred = gbm_predicted_values_out, obs = test_standard$ACC)
+# # # AUC
+# # auc = roc(test$ACC, as.numeric(gbm_predicted_values_out))
+# # print(auc)
+# # plot(auc, ylim = c(0,1), print.thres = TRUE, main = paste('AUC:', round(auc$auc[[1]], 2)))
+# # abline(h = 1, col = 'blue', lwd = 2)
+# # abline(h = 0, col = 'red',  lwd = 2)
+# 
+# ## rpart
+# # summary(modFit_rpart_b)
+# # summary(modFit_rpart_p)
+# # In-sample prediction error
+# rpart_predicted_values    = predict(modFit_rpart, newdata = train_standard)
+# rpart_prediction_table_in = table(rpart_predicted_values, train_standard$ACC)
+# correct_classifications_rpart = sum(diag(as.matrix(rpart_prediction_table_in)))
+# classification_errors_rpart = sum(as.matrix(rpart_prediction_table_in)) - correct_classifications_rpart
+# missclassifications = classification_errors_rpart / (classification_errors_rpart + correct_classifications_rpart)
+# # Out-of-sample prediction error
+# rpart_predicted_values_out = predict(modFit_rpart, newdata = test_standard)
+# rpart_prediction_table_out = table(rpart_predicted_values_out, test_standard$ACC)
+# correct_classifications_rpart_out = sum(diag(as.matrix(rpart_prediction_table_out)))
+# classification_errors_rpart_out = numberOfTestCases - correct_classifications_rpart_out
+# rpart_missclassifications_out = classification_errors_rpart_out / numberOfTestCases
+# # Results
+# # plot(varImp(modFit_rpart, scale = F))
+# # rpart_prediction_table_in
+# # rpart_prediction_table_out
+# # postResample(pred = rpart_predicted_values_out, obs = test_standard$ACC)           # Acc & Kappa!!! Observed Accuracy is simply the number of instances that were classified correctly throughout the entire confusion matrix, i.e. the number of instances that were labeled as Cats via ground truth and then classified as Cats by the machine learning classifier, or labeled as Dogs via ground truth and then classified as Dogs by the machine learning classifier. In essence, the kappa statistic is a measure of how closely the instances classified by the machine learning classifier matched the data labeled as ground truth, controlling for the accuracy of a random classifier as measured by the expected accuracy. Not only can this kappa statistic shed light into how the classifier itself performed, the kappa statistic for one model is directly comparable to the kappa statistic for any other model used for the same classification task.
+# # AUC
+# 
+# ## Random forest (rf)
+# # In-sample prediction error
+# rf_predicted_values        = predict(modFit_rf, newdata = train_standard)
+# rf_prediction_table_in     = table(rf_predicted_values, train_standard$ACC)
+# correct_classifications_rf = sum(diag(as.matrix(rf_prediction_table_in)))
+# classification_errors_rf   = sum(as.matrix(rf_prediction_table_in)) - correct_classifications_rf
+# missclassifications        = classification_errors_rf / (classification_errors_rf + correct_classifications_rf)
+# # Out-of-sample prediction error
+# rf_predicted_values_out    = predict(modFit_rf, newdata = test_standard)
+# rf_prediction_table_out    = table(rf_predicted_values_out, test_standard$ACC)
+# correct_classifications_rf_out = sum(diag(as.matrix(rf_prediction_table_out)))
+# classification_errors_rf_out = numberOfTestCases - correct_classifications_rf_out
+# rf_missclassifications_out = classification_errors_rf_out / numberOfTestCases
+# # Results
+# # plot(varImp(modFit_rf, scale = F))
+# # rf_prediction_table_in
+# # rf_prediction_table_out
+# # postResample(pred = rf_predicted_values_out, obs = test_standard$ACC)
+# # AUC
+# 
+# ## Tree & bagging (treebag)
+# # In-sample prediction error
+# treebag_predicted_values  = predict(modFit_treebag, newdata = train_standard)
+# treebag_prediction_table_in = table(treebag_predicted_values, train_standard$ACC)
+# correct_classifications_treebag = sum(diag(as.matrix(treebag_prediction_table_in)))
+# classification_errors_treebag = sum(as.matrix(treebag_prediction_table_in)) - correct_classifications_treebag
+# missclassifications = classification_errors_treebag / (classification_errors_treebag + correct_classifications_treebag)
+# # Out-of-sample prediction error
+# treebag_predicted_values_out = predict(modFit_treebag, newdata = test_standard)
+# treebag_prediction_table_out = table(treebag_predicted_values_out, test_standard$ACC)
+# correct_classifications_treebag_out = sum(diag(as.matrix(treebag_prediction_table_out)))
+# classification_errors_treebag_out = numberOfTestCases - correct_classifications_treebag_out
+# treebag_missclassifications_out = classification_errors_treebag_out / numberOfTestCases
+# # Resutls
+# # plot(varImp(modFit_treebag, scale = F))
+# # treebag_prediction_table_in
+# # treebag_prediction_table_out
+# # postResample(pred = treebag_predicted_values_out, obs = test_standard$ACC)
+# # AUC
+```
+```{r}
+```

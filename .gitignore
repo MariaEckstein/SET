@@ -1,4 +1,13 @@
-*.doc
+*.doc*
 *.pdf
 *.ppt*
 */*
+*.jpg
+*.jpeg
+*.png
+*.csv
+*.xlsx
+*.Rhistory
+*.txt
+*.zip
+*.mat
