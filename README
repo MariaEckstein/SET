@@ -1,0 +1,6 @@
+SET_analyses_loop.Rmd is the main file. It has code for all the analyses and plots.
+It calls a few functions from within the FUNCTIONS folder, so make sure to get it.
+
+The paths are all absolute and only work on my computer. Make sure you change them according to where you are storing your SET data.
+
+For questions and feedback, contact maria.eckstein@berkeley.edu
