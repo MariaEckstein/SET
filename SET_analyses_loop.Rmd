@@ -19,7 +19,7 @@ output:
 #################
 
 ### Set directories
-setwd("C:/Users/maria/documents/MEGAsync/Berkeley/R scripts/sequentialset")
+#setwd("C:/Users/maria/documents/MEGAsync/Berkeley/R scripts/sequentialset")
 file_dir = "C:/Users/maria/documents/MEGAsync/Berkeley/R scripts/sequentialset/subj_files/databoth/raw_data"
 figure_dir = "C:/Users/Maria/Dropbox/Maria_Ariel_Silvia_SETpaper/Figures"
 # file_dir = "C:/Users/maria/MEGAsync/Berkeley/R scripts/sequentialset/subj_files_nb"
@@ -49,7 +49,8 @@ overall_cutoff = 14/20           # How many trials must a subject get right per 
 use_dprime = T          # What should be used a a performance cutoff? d-prime ("dprime_cutoff") -> set to "T"; overall performance ("overall_cutoff") -> set to "F"?
 
 ### Get plot colours
-span_colors = colorRampPalette(c("blue", "yellow"))
+span_colors = colorRampPalette(c("white", "green", "black"))
+span_colors = span_colors(9)[5:8]
 oddball_colors = c("dark grey", "orange", "red")    #colorRampPalette(c("red", "yellow"))
 bw_colors = c("#999999", "#000000")
 set_colors = c("dark grey", "dark orange")    #colorRampPalette(c("red", "yellow"))
@@ -275,11 +276,11 @@ exclusion_data2 = ddply(trialwise_perf, .(Subject, set), summarize,
                         RT = median(RT, na.rm = T),
                         ACC = mean(ACC, na.rm = T))
 exclusion_data2b = reshape(subset(exclusion_data2, select = c("Subject", "set", "ACC")),
-        v.names = "ACC", idvar = "Subject", timevar = "set", direction = "wide")
+                           v.names = "ACC", idvar = "Subject", timevar = "set", direction = "wide")
 exclusion_data2b$dprime = with(exclusion_data2b, dprime(hits = ACC.SET, false.alarms = (1 - ACC.noSET)))
 exclusion_data2c = ddply(trialwise_perf, .(Subject), summarize,
-                        RT = median(RT, na.rm = T),
-                        ACC = mean(ACC, na.rm = T))
+                         RT = median(RT, na.rm = T),
+                         ACC = mean(ACC, na.rm = T))
 
 gg_exclude_overall = ggplot(exclusion_data2b, aes(ACC.SET, ACC.noSET, color = !Subject %in% overall_chance_performers)) +
   theme_bw() +
@@ -336,9 +337,9 @@ gg_dprime_histogram = ggplot(exclusion_data3b, aes(dprime, fill = !Subject %in% 
   facet_wrap(~ span)
 
 if (ggsave_figures) {
-  ggsave(plot = gg_show_dprimes, paste(figure_dir, "//gg_show_dprimes.png", sep = ""), width = 4, height = 4)
-  ggsave(plot = gg_exclude_span, paste(figure_dir, "//gg_exclude_span.png", sep = ""), width = 8, height = 8)
-  ggsave(plot = gg_dprime_histogram, paste(figure_dir, "//gg_dprime_histogram.png", sep = ""), width = 8, height = 8)
+  ggsave(plot = gg_show_dprimes, paste(figure_dir, "/gg_show_dprimes.png", sep = ""), width = 4, height = 4)
+  ggsave(plot = gg_exclude_span, paste(figure_dir, "/gg_exclude_span.png", sep = ""), width = 8, height = 8)
+  ggsave(plot = gg_dprime_histogram, paste(figure_dir, "/gg_dprime_histogram.png", sep = ""), width = 8, height = 8)
 }
 
 ### Find subjects who need to be excluded based on their weak performance
@@ -363,16 +364,16 @@ source("FUNCTIONS/mean.cl.boot.R")
 ## Get performance data for SETs and noSETs for each subject (AFTER excluding subjects)
 # First, get performance for each trial
 trialwise_perf = ddply(allfiles, .(Subject, TrialId, set, oddball, span), summarize,
-                        RT = mean(RT, na.rm = T),
-                        ACC = mean(ACC, na.rm = T),
-                        dilation4 = mean(rel_pupil, na.rm = T))
+                       RT = median(RT, na.rm = T),
+                       ACC = mean(ACC, na.rm = T),
+                       dilation4 = mean(rel_pupil, na.rm = T))
 trialwise_perf$set = factor(trialwise_perf$set, levels = c("SET", "noSET"))
 trialwise_perf$oddball = factor(trialwise_perf$oddball, levels = c("SET", "noSET-3", "noSET-4"))
 
 # Then, average over spans to get subject average accuracies
 subjwise_perf_oddball = ddply(trialwise_perf, .(Subject, set, span, oddball), summarize,
-                  RT = median(RT, na.rm = T),
-                  ACC = mean(ACC, na.rm = T))
+                              RT = median(RT, na.rm = T),
+                              ACC = mean(ACC, na.rm = T))
 subjwise_perf_set = ddply(trialwise_perf, .(Subject, set, span), summarize,
                   RT = median(RT, na.rm = T),  # SHOULD NEVER BE USED!!
                   ACC = mean(ACC, na.rm = T))
@@ -398,28 +399,20 @@ subjwise_perf_oddball_both = rbind(subjwise_perf_oddball_noSET3, subjwise_perf_o
 
 ### d' plot (with bootstrapped 95% CI's)
 dprime_plot = ggplot(subjwise_perf_oddball_both, aes(span, dprime, fill = span, color = span)) +
-  # stat_summary(fun.data = mean.cl.boot, geom = "bar", B = 2000, tr = .2) +
   theme_bw() +
-  # stat_summary(fun.y = mean, geom = "line", aes(group = 1), color = "black") +
-  # stat_summary(fun.data = mean.cl.boot, fun.args = list(B = 2000, tr = .2), geom = "pointrange") +
   stat_summary(fun.data = mean.cl.boot, fun.args = list(B = 2000, tr = .2, ci = .68), geom = "line", aes(group = 1), color = "black") +
   stat_summary(fun.data = mean.cl.boot, fun.args = list(B = 2000, tr = .2, ci = .68), geom = "pointrange") +
-  scale_color_manual(values = span_colors(4)) +
-  scale_fill_manual(values = span_colors(4)) +
   labs(x = "", y = "d'") +
-  coord_trans(y = "log") +
   theme(legend.position = "none") +
   facet_wrap(~ oddball)
 
 ### RT plot (with bootstrapped 95% CI's)
-RT_plot = ggplot(cor_subjwise_perf_set, aes(span, RT, group = set, color = set)) +  #, color = span, fill = span, shape = set
+RT_plot = ggplot(cor_subjwise_perf_set, aes(span, RT, group = set, color = set)) +
   theme_bw() +
   stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "pointrange") +
   scale_color_manual(values = c("dark grey", "dark orange")) +
-  # coord_trans(y = "log10") +
   labs(x = "", y = "RT (msec)") +
   scale_x_discrete(labels = c("0sp", "1sp", "2sp", "3sp")) +
-  # coord_cartesian(ylim = c(0, 1)) +
   theme(legend.position = "none") +
   facet_wrap(~ set)
 
@@ -430,8 +423,6 @@ ACC_plot = ggplot(subjwise_perf_set, aes(span, 100-ACC*100, group = set, color =
   scale_color_manual(values = c("dark grey", "dark orange")) +
   labs(x = "", y = "Error rate (%)") +
   scale_x_discrete(labels = c("0sp", "1sp", "2sp", "3sp")) +
-  coord_cartesian(ylim = c(1, 25)) +
-  # coord_trans(y = "log10") +
   theme(legend.position = "none") +
   facet_wrap(~ set)
 
@@ -442,16 +433,11 @@ RT_plot_bw = RT_plot +
   scale_color_manual(values = bw_colors)
 
 if (ggsave_figures) {
-  ACC_and_RT_plot = arrangeGrob(ACC_plot, RT_plot, dprime_plot, nrow = 3)
-  plot(ACC_and_RT_plot)
-  ggsave(paste(figure_dir, "/Figure3_.png", sep = ""), ACC_and_RT_plot, width = 4, height = 8)
-  
-  ggsave(paste(figure_dir, "/Figure3acc_bw_.png", sep = ""), ACC_plot_bw, width = one_by_two$width, height = one_by_two$height)
-  ggsave(paste(figure_dir, "/Figure3rt_bw_.png", sep = ""), RT_plot_bw, width = 3.5, height = 2.5)
-  
-  # ACC_and_RT_plot2 = arrangeGrob(ACC_plot2, RT_plot2, dprime_plot2, nrow = 3)
-  # plot(ACC_and_RT_plot2)
-  # ggsave(paste(figure_dir, "//Figure3s_.png", sep = ""), ACC_and_RT_plot2, width = 6, height = 8)
+  plot(ACC_plot_bw)
+  plot(RT_plot_bw)
+  plot(dprime_plot)
+  ggsave(paste(figure_dir, "/Fig4Errors.png", sep = ""), ACC_plot_bw, width = one_by_two$width, height = one_by_two$height)
+  ggsave(paste(figure_dir, "/Fig4RTs.png", sep = ""), RT_plot_bw, width = 3.5, height = 2.5)
 }
 ```
 
@@ -476,17 +462,17 @@ subjwise_perf_set$log_errors = log(1 - subjwise_perf_set$ACC + .01)
 (p_skew_logerrors = agostino.test(subjwise_perf_set$log_errors))
 
 ### Run pairwise t-tests
+with(subset(subjwise_perf_set, set == "SET"), pairwise.t.test(log_errors, span, p.adjust.method = "bonferroni"))  # to get the p-values
+t.test(log_errors ~ span, data = subset(subjwise_perf_set, set == "SET" & span %in% c("1span", "2span")))  # to get the lowest t-value
+with(subset(subjwise_perf_set, set == "noSET"), pairwise.t.test(log_errors, span, p.adjust.method = "bonferroni"))
+t.test(log_errors ~ span, data = subset(subjwise_perf_set, set == "noSET" & span %in% c("1span", "3span")))  # to get the lowest t-value
+# with(subset(subjwise_perf_oddball, oddball == "noSET-4"), pairwise.t.test(log_errors, span, p.adjust.method = "bonferroni"))
+
 with(subset(cor_subjwise_perf_set, set == "SET"), pairwise.t.test(log_RT, span, p.adjust.method = "bonferroni"))
 t.test(log_RT ~ span, data = subset(cor_subjwise_perf_set, set == "SET" & span %in% c("1span", "3span")))  # to get the lowest t-value
 with(subset(cor_subjwise_perf_set, set == "noSET"), pairwise.t.test(log_RT, span, p.adjust.method = "bonferroni"))
 t.test(log_RT ~ span, data = subset(cor_subjwise_perf_set, set == "noSET" & span %in% c("0span", "3span")))  # to get the lowest t-value
 # with(subset(cor_subjwise_perf_oddball, oddball == "noSET-4"), pairwise.t.test(log_RT, span, p.adjust.method = "bonferroni"))
-
-with(subset(subjwise_perf_set, set == "SET"), pairwise.t.test(log_errors, span, p.adjust.method = "bonferroni"))  # to get the p-values
-t.test(log_errors ~ span, data = subset(subjwise_perf_set, set == "SET" & span %in% c("0span", "3span")))  # to get the lowest t-value
-with(subset(subjwise_perf_set, set == "noSET"), pairwise.t.test(log_errors, span, p.adjust.method = "bonferroni"))
-t.test(log_errors ~ span, data = subset(subjwise_perf_set, set == "noSET" & span %in% c("1span", "2span")))  # to get the lowest t-value
-# with(subset(subjwise_perf_oddball, oddball == "noSET-4"), pairwise.t.test(log_errors, span, p.adjust.method = "bonferroni"))
 
 # Also compare No-SET-3 and No-SET-4 trials
 t.test(log_RT ~ oddball, data = subset(cor_subjwise_perf_oddball, set == "noSET" & span == "0span"), paired = T)
@@ -535,18 +521,6 @@ if (run_regression_models) {
                            odd_mod, span_odd_mod, span_x_odd_mod)
   RT_grand_model
   
-  RT_lmer = lmer(log_RT ~ set * span + (set * span | Subject),
-                 data = subset(trialwise_perf, ACC == 1),
-                 na.action = na.omit,
-                 REML = F,
-                 control = lmerControl(optCtrl = list(maxfun = 1e6)))
-  summary(RT_lmer)
-  RTodd_lmer = lmer(log_RT ~ oddball * span + (oddball * span | Subject),
-                 data = subset(trialwise_perf, ACC == 1),
-                 na.action = na.omit,
-                 REML = F,
-                 control = lmerControl(optCtrl = list(maxfun = 1e6)))
-  summary(RTodd_lmer)
   ACC_lmer = glmer(ACC ~ set * span + (set * span | Subject),
                  data = trialwise_perf,
                  na.action = na.omit,
@@ -560,6 +534,18 @@ if (run_regression_models) {
                  family = binomial,
                  control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e6)))
   summary(ACC_lmer)
+  RT_lmer = lmer(log_RT ~ set * span + (set * span | Subject),
+                 data = subset(trialwise_perf, ACC == 1),
+                 na.action = na.omit,
+                 REML = F,
+                 control = lmerControl(optCtrl = list(maxfun = 1e6)))
+  summary(RT_lmer)
+  RTodd_lmer = lmer(log_RT ~ oddball * span + (oddball * span | Subject),
+                 data = subset(trialwise_perf, ACC == 1),
+                 na.action = na.omit,
+                 REML = F,
+                 control = lmerControl(optCtrl = list(maxfun = 1e6)))
+  summary(RTodd_lmer)
 }
 # # Create the separate RT models for SET, noSET-3, and noSET-4
 # baseline_mod      = lme(log_RT ~ 1, random = ~1|Subject/span, data = subset(cor_subjwise_perf_set, set == "SET"), method = "ML", na.action = na.omit)
@@ -1177,9 +1163,12 @@ subjwise_perf_g = merge(gdat,
 subjwise_perf_g$ppg = factor(subjwise_perf_g$ppg)
 
 ### Span pupil dilation
+ggplot(tile_data, aes(x = x, y = y)) +
+  geom_tile()
+
 # Plot SETs only
 gg_ppg = ggplot(subset(pupil_ACC1_SET_g, !is.na(ppg) & oddball == "SET"), aes(rel.time, rel.pupil, color = span, fill = span)) +
-  geom_tile(data = tile_data, aes(x = x, y = y, width = width, height = height), inherit.aes = F, fill = "white") +
+  geom_tile(data = tile_data, aes(x = x, y = y, width = width, height = height), inherit.aes = F, fill = "white") +  #
   geom_vline(xintercept = response_prompt_time, size = 1.5) +
   geom_text(data = tile_data, aes(x = x, y = -0.06, label = labels), inherit.aes = F) +
   geom_text(data = resp_fix_labels, aes(x = x, y = -0.06, label = label), inherit.aes = F) +
@@ -1187,11 +1176,12 @@ gg_ppg = ggplot(subset(pupil_ACC1_SET_g, !is.na(ppg) & oddball == "SET"), aes(re
   theme(legend.position = c(.95, .8), legend.background = element_rect(fill = "transparent")) +
   scale_x_continuous(breaks = seq(0, 9, 1.5)) +
   facet_grid( ~ ppg)
+
 gg_ppg = gg_ppg +
   stat_summary(fun.y = mean, geom = 'point') +
   stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = 'smooth', alpha = 0.2) +
-  scale_color_brewer(palette = "RdYlBu") +
-  scale_fill_brewer(palette = "RdYlBu")
+  scale_color_manual(values = span_colors) +
+  scale_fill_manual(values = span_colors)
 
 ### Add response times
 RT_data = ddply(subjwise_perf_g, .(oddball, span, ppg), summarize,
@@ -1225,7 +1215,7 @@ gg_Item4_inlay = ggplot(Item4_pupils, aes(span, mean_pupil, fill = span)) +
   theme_bw() +
   stat_summary(fun.y = "mean", geom = "bar") +
   stat_summary(fun.data = "mean_cl_normal", geom = "pointrange", fun.args = list(mult = 1)) +
-  scale_fill_brewer(palette = "RdYlBu") +
+  scale_fill_manual(values = span_colors) +
   labs(x = "", y = "Pupil dilation Item4") +
   theme(legend.position = "none") +
   facet_grid(~ ppg)
@@ -1241,10 +1231,8 @@ gg_ppg2 = ggplot(subset(pupil_ACC1_SET_g, !is.na(ppg)), aes(rel.time, rel.pupil,
   scale_x_continuous(breaks = seq(0, 9, 1.5)) +
   stat_summary(fun.y = mean, geom = 'point') +
   stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = 'smooth', alpha = 0.2) +
-  scale_color_brewer(palette = "RdYlBu") +
-  scale_fill_brewer(palette = "RdYlBu") +
-  # scale_color_manual(values = span_colors(4)) +
-  # scale_fill_manual(values = span_colors(4)) +
+  scale_color_manual(values = span_colors) +
+  scale_fill_manual(values = span_colors) +
   facet_grid(oddball ~ ppg)
 
 if (ggsave_figures) {
@@ -1539,7 +1527,8 @@ gg_VOE = ggplot(odd_idx_dat_SnS5, aes(span, value, color = ppg, shape = ppg, gro
   stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "pointrange") +
   stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "line") +
   theme(legend.position = "none") +
-  labs(x = "", y = "VOE") +
+  scale_x_discrete(labels = c("0sp", "1sp", "2sp", "3sp")) +
+  labs(x = "", y = "VOE (mm)") +
   scale_color_manual(values = bw_colors)
 gg_VOE_I34 = gg_VOE +
   facet_grid(~ VOEitem)
@@ -1547,8 +1536,8 @@ gg_VOE_I34 = gg_VOE +
 if (ggsave_figures) {
   plot(gg_VOE)
   plot(gg_VOE_I34)
-  ggsave(plot = gg_VOE, paste(figure_dir, "/Figure7_VOE_.png", sep = ""), width = 3, height = 4)
-  ggsave(plot = gg_VOE_I3, paste(figure_dir, "/Figure7_VOE_I34_.png", sep = ""), width = 3, height = 4)
+  ggsave(plot = gg_VOE, paste(figure_dir, "/Figure8_VOE_.png", sep = ""), width = one_by_one$width, height = one_by_one$height)
+  ggsave(plot = gg_VOE_I3, paste(figure_dir, "/Figure8_VOE_I34_.png", sep = ""), width = 3, height = 4)
 }
   
 # Test
@@ -1886,27 +1875,24 @@ compare_say_SETnoSET_counts = merge(compare_say_SETnoSET_counts,
                                     subset(gdat, select = c("Subject", "ppg")))
 
 ### RTs
-gg_ppg_RT = ggplot(s_perf_ppg, aes(span, RT, color = ppg, group = ppg, shape = ppg)) +
+gg_ppg_RT = ggplot(s_perf_ppg_cor, aes(span, RT, color = ppg, group = ppg, shape = ppg)) +
   theme_bw() +
   stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "pointrange") +
   stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "line") +
   scale_color_manual(values = bw_colors) +
-  # coord_trans(y = "log10") +
   labs(x = "", y = "RT (ms)", color = "") +
   scale_x_discrete(labels = c("0sp", "1sp", "2sp", "3sp")) +
-  theme(legend.position = "none") +  #c(.1, .9), legend.background = element_rect(fill = "transparent")) +
+  theme(legend.position = "none") +
   facet_grid( ~ set)
 ### ACCs
-gg_ppg_ACC = ggplot(s_perf_ppg, aes(span, 1-ACC, color = ppg, group = ppg, shape = ppg)) +
+gg_ppg_ACC = ggplot(s_perf_ppg, aes(span, 1-ACC, color = ppg, group = ppg, shape = ppg)) +#
   theme_bw() +
   stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "pointrange") +
   stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "line") +
   scale_color_manual(values = bw_colors) +
-  # coord_trans(y = "log10") +
-  # scale_y_log10(breaks = seq(0, .20, .02)) +  #Gives the wrong results!!!
   labs(x = "", y = "Error rates (%)", color = "") +
   scale_x_discrete(labels = c("0sp", "1sp", "2sp", "3sp")) +
-  theme(legend.position = "none") +  #c(.1, .9), legend.background = element_rect(fill = "transparent")) +
+  theme(legend.position = "none") +
   facet_grid( ~ set)
 ### d-prime
 gg_ppg_dprime = ggplot(s_perf_dprime, aes(span, dprime, color = ppg, group = ppg, shape = ppg)) +
@@ -1914,8 +1900,6 @@ gg_ppg_dprime = ggplot(s_perf_dprime, aes(span, dprime, color = ppg, group = ppg
   stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "pointrange") +
   stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "line") +
   scale_color_manual(values = bw_colors) +
-  # coord_trans(y = "log10") +
-  # scale_y_log10(breaks = seq(0, .20, .02)) +  #Gives the wrong results!!!
   labs(x = "", y = "d-prime", color = "") +
   scale_x_discrete(labels = c("0sp", "1sp", "2sp", "3sp")) +
   theme(legend.position = "none")
@@ -1925,8 +1909,6 @@ gg_ppg_ACC_SET_minus_noSET = ggplot(compare_say_SETnoSET_counts, aes(span, SET_m
   stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "pointrange") +
   stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "line") +
   scale_color_manual(values = bw_colors) +
-  # coord_trans(y = "log10") +
-  # scale_y_log10(breaks = seq(0, .20, .02)) +  #Gives the wrong results!!!
   labs(x = "", y = "noSET bias <-> SET Bias", color = "") +
   scale_x_discrete(labels = c("0sp", "1sp", "2sp", "3sp")) +
   theme(legend.position = "none")
@@ -1936,8 +1918,6 @@ gg_ppg_ACC_count_SET = ggplot(compare_say_SETnoSET_counts, aes(span, count_SET, 
   stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "pointrange") +
   stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "line") +
   scale_color_manual(values = bw_colors) +
-  # coord_trans(y = "log10") +
-  # scale_y_log10(breaks = seq(0, .20, .02)) +  #Gives the wrong results!!!
   labs(x = "", y = "noSET bias <-> SET Bias", color = "") +
   scale_x_discrete(labels = c("0sp", "1sp", "2sp", "3sp")) +
   theme(legend.position = "none")
@@ -1947,8 +1927,6 @@ gg_ppg_ACC_count_noSET = ggplot(compare_say_SETnoSET_counts, aes(span, count_noS
   stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "pointrange") +
   stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "line") +
   scale_color_manual(values = bw_colors) +
-  # coord_trans(y = "log10") +
-  # scale_y_log10(breaks = seq(0, .20, .02)) +  #Gives the wrong results!!!
   labs(x = "", y = "noSET bias <-> SET Bias", color = "") +
   scale_x_discrete(labels = c("0sp", "1sp", "2sp", "3sp")) +
   theme(legend.position = "none")
@@ -1970,7 +1948,7 @@ with(subset(s_perf_ppg, span != "0span" & set == "SET"), cor.test(lin_minus_qua,
 with(subset(s_perf_ppg, span == "0span" & set == "SET"), cor.test(lin_minus_qua, log_RT))
 with(subset(s_perf_ppg, span != "0span" & set == "SET"), cor.test(lin_minus_qua, log_RT))
 
-gg_linqua_RT_cont = ggplot(s_perf_ppg, aes(lin_minus_qua, RT/1000, color = oddball, fill = oddball)) +
+gg_linqua_RT_cont = ggplot(s_perf_ppg_cor, aes(lin_minus_qua, RT/1000, color = oddball, fill = oddball)) +
   theme_bw() +
   geom_vline(xintercept = 0) +
   geom_point(alpha = .5) +
@@ -1986,14 +1964,16 @@ s = ggplot(s_perf_ppg, aes(RT/1000, ACC, color = lin_minus_qua)) +
 
 if (ggsave_figures) {
   plot(gg_ppg_RT)
-  ggsave(plot = gg_ppg_RT, paste(figure_dir, "/Figure5_ppg_RT.png", sep = ""), width = one_by_two$width, height = one_by_two$height)
+  ggsave(plot = gg_ppg_RT, paste(figure_dir, "/Figure8_ppg_RT.png", sep = ""), width = one_by_two$width, height = one_by_two$height)
   plot(gg_ppg_ACC)
-  ggsave(plot = gg_ppg_ACC, paste(figure_dir, "/Figure5_ppg_ACC.png", sep = ""), width = one_by_two$width, height = one_by_two$height)
+  ggsave(plot = gg_ppg_ACC, paste(figure_dir, "/Figure8_ppg_ACC.png", sep = ""), width = one_by_two$width, height = one_by_two$height)
+  plot(gg_ppg_dprime)
+  ggsave(plot = gg_ppg_dprime, paste(figure_dir, "/Figure8_ppg_dprime.png", sep = ""), width = one_by_one$width, height = one_by_one$height)
   gg_linqua_perf_cont = arrangeGrob(gg_linqua_ACC_cont, gg_linqua_RT_cont, nrow = 2)
   plot(gg_linqua_perf_cont)
   ggsave(plot = gg_linqua_perf_cont, paste(figure_dir, "/Figure5Sa.png", sep = ""), width = 7, height = 4)
-  ggsave(plot = gg_ppg_dprime, file.path(figure_dir, "Figure5_ppg_dprime.png"), width = one_by_one$width, height = one_by_one$height)
-  ggsave(plot = gg_ppg_ACC_SET_minus_noSET, file.path(figure_dir, "Figure5_ppg_ACC_SET_minus_noSET.png"), width = one_by_one$width, height = one_by_one$height)
+  ggsave(plot = gg_ppg_dprime, file.path(figure_dir, "Figure8_ppg_dprime.png"), width = one_by_one$width, height = one_by_one$height)
+  ggsave(plot = gg_ppg_ACC_SET_minus_noSET, file.path(figure_dir, "Figure8_ppg_ACC_SET_minus_noSET.png"), width = one_by_one$width, height = one_by_one$height)
 }
 ```
 
@@ -2046,35 +2026,11 @@ p_3 = t.test(dprime ~ ppg, data = subset(s_perf_dprime, span == "3span"))$p.valu
 p.adjust(c(p_0, p_1, p_2, p_3), method = "bonferroni")
 
 # SET: Analyze linear and inverse-U PDPs separately
+trialwise_perf = merge(trialwise_perf, gdat, all = T)
 trialwise_perf$ppg = factor(trialwise_perf$ppg)
 contrasts(trialwise_perf$ppg) = lin_minus_qua
 
 if (run_regression_models) {
-  
-  print("SET RT")
-  RT_lmer = lmer(log_RT ~ ppg * span + (ppg * span | Subject),
-                 data = subset(trialwise_perf, ACC == 1 & set == "SET"),
-                 na.action = na.omit,
-                 REML = F,
-                 control = lmerControl(optCtrl = list(maxfun = 1e6)))
-  summary(RT_lmer)
-  anova(RT_lin_lmer, type = 3)
-  
-  print("linear SET RT")
-  RT_lin_lmer = lmer(log_RT ~ span + (span | Subject),
-                 data = subset(trialwise_perf, ACC == 1 & set == "SET" & ppg == "linear"),
-                 na.action = na.omit,
-                 REML = F,
-                 control = lmerControl(optCtrl = list(maxfun = 1e6)))
-  summary(RT_lin_lmer)
-  
-  print("inverse-U SET RT")
-  RT_qua_lmer = lmer(log_RT ~ span + (span | Subject),
-                 data = subset(trialwise_perf, ACC == 1 & set == "SET" & ppg == "u-shape"),
-                 na.action = na.omit,
-                 REML = F,
-                 control = lmerControl(optCtrl = list(maxfun = 1e6)))
-  summary(RT_qua_lmer)
   
   print("SET ACC")
   ACC_lmer = glmer(ACC ~ ppg * span + (ppg * span | Subject),
@@ -2084,7 +2040,6 @@ if (run_regression_models) {
                  control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e6)))
   summary(ACC_lmer)
   anova(ACC_lmer, type = 3)
-  
   print("linear SET ACC")
   ACC_lin_lmer = glmer(ACC ~ span + (span | Subject),
                  data = subset(trialwise_perf, set == "SET" & ppg == "linear"),
@@ -2093,7 +2048,6 @@ if (run_regression_models) {
                  control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e6)))
   summary(ACC_lin_lmer)
   anova(ACC_lin_lmer, type = 3)
-  
   print("inverse-U SET ACC")
   ACC_qua_lmer = glmer(ACC ~ span + (span | Subject),
                  data = subset(trialwise_perf, set == "SET" & ppg == "u-shape"),
@@ -2102,6 +2056,29 @@ if (run_regression_models) {
                  control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e6)))
   summary(ACC_qua_lmer)
   anova(ACC_qua_lmer, type = 3)
+  
+  print("SET RT")
+  RT_lmer = lmer(log_RT ~ ppg * span + (ppg * span | Subject),
+                 data = subset(trialwise_perf, ACC == 1 & set == "SET"),
+                 na.action = na.omit,
+                 REML = F,
+                 control = lmerControl(optCtrl = list(maxfun = 1e6)))
+  summary(RT_lmer)
+  anova(RT_lmer, type = 3)
+  print("linear SET RT")
+  RT_lin_lmer = lmer(log_RT ~ span + (span | Subject),
+                 data = subset(trialwise_perf, ACC == 1 & set == "SET" & ppg == "linear"),
+                 na.action = na.omit,
+                 REML = F,
+                 control = lmerControl(optCtrl = list(maxfun = 1e6)))
+  summary(RT_lin_lmer)
+  print("inverse-U SET RT")
+  RT_qua_lmer = lmer(log_RT ~ span + (span | Subject),
+                 data = subset(trialwise_perf, ACC == 1 & set == "SET" & ppg == "u-shape"),
+                 na.action = na.omit,
+                 REML = F,
+                 control = lmerControl(optCtrl = list(maxfun = 1e6)))
+  summary(RT_qua_lmer)
 }
 
 # print("linear SET ACC")
@@ -2243,7 +2220,7 @@ by(qu_ppg_long$value, qu_ppg_long$measure, sd, na.rm = T)
 # Get the groups
 subjwise_SET_perf = ddply(subset(trialwise_perf, oddball == "SET"), .(Subject), summarize,
                           SET_RT = median(RT, na.rm = T),
-                          SET_ACC = mean(ACC, na.rm = T))
+                          SET_ACC = mean(as.numeric(as.character(ACC)), na.rm = T))
 
 subjwise_SET_perf$ACC_group = "96-100%"
 subjwise_SET_perf$ACC_group[subjwise_SET_perf$SET_ACC < .95] = "65-95%"
@@ -2281,11 +2258,11 @@ gg_better_worse_pupils = ggplot(pupildat_SET_ACC1, aes(rel.time, rel.pupil, colo
   scale_x_continuous(breaks = seq(0, 9, 1.5)) +
   stat_summary(fun.y = mean, geom = 'point') +
   stat_summary(fun.data = mean_se, geom = 'smooth', alpha = 0.2) +
-  scale_color_brewer(palette = "RdYlBu") +
-  scale_fill_brewer(palette = "RdYlBu") +
+  scale_color_manual(values = span_colors) +
+  scale_fill_manual(values = span_colors) +
   labs(x = 'Time (s)', y = 'TEPR (mm)', color = ' ', fill = ' ') +
   theme(legend.position = c(.4, .9), legend.background = element_rect(fill = "transparent")) +
-  facet_grid( ~ ACC_group)
+  facet_grid(~ ACC_group)
 # Inlay
 bw_inlay_dat = ddply(subset(pupildat_SET_ACC1, rel.time >= 5.5 & rel.time <= 6), .(Subject, span, ACC_group, RT_group), summarize,
       pupil4 = mean(rel.pupil, na.rm = T))
@@ -2296,7 +2273,7 @@ gg_bw_inlay = ggplot(bw_inlay_dat, aes(span, pupil4, fill = span)) +
   scale_fill_brewer(palette = "RdYlBu") +
   labs(x = "", y = "Pupil dilation Item4") +
   theme(legend.position = "none") +
-  facet_grid( ~ ACC_group)
+  facet_grid(~ ACC_group)
   
 # Separation by RT
 gg_fast_slow_pupils = gg_better_worse_pupils +
@@ -2322,6 +2299,11 @@ length(unique(subset(pupildat_SET_ACC1_good, RT_group == levels(pupildat_SET_ACC
 print(levels(pupildat_SET_ACC1_good$RT_group)[2])
 length(unique(subset(pupildat_SET_ACC1_good, RT_group == levels(pupildat_SET_ACC1_good$RT_group)[2])$Subject))
 
+# Get median RTs
+median(pupildat_SET_ACC1_good$SET_RT)
+median(subset(pupildat_SET_ACC1_good, RT_group == "fast")$SET_RT)
+median(subset(pupildat_SET_ACC1_good, RT_group == "slow")$SET_RT)
+
 ### Plot good Ss
 gg_better_fast_slow_pupils = ggplot(pupildat_SET_ACC1_good, aes(rel.time, rel.pupil, color = span, fill = span)) +
   geom_tile(data = tile_data, aes(x = x, y = y, width = width, height = height), inherit.aes = F, fill = "white") +
@@ -2333,8 +2315,8 @@ gg_better_fast_slow_pupils = ggplot(pupildat_SET_ACC1_good, aes(rel.time, rel.pu
   scale_x_continuous(breaks = seq(0, 9, 1.5)) +
   stat_summary(fun.y = mean, geom = 'point') +
   stat_summary(fun.data = mean_se, geom = 'smooth', alpha = 0.2) +
-  scale_color_brewer(palette = "RdYlBu") +
-  scale_fill_brewer(palette = "RdYlBu") +
+  scale_color_manual(values = span_colors) +
+  scale_fill_manual(values = span_colors) +
   labs(x = 'Time (s)', y = 'TEPR (mm)', color = ' ', fill = ' ') +
   theme(legend.position = c(.4, .9), legend.background = element_rect(fill = "transparent")) +
   facet_grid( ~ RT_group)
