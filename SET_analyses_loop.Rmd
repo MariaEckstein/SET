@@ -355,9 +355,7 @@ Excluded subjects: `r chance_performers`
 
 # Results
 
-## Response times and accuracy
-
-```{r, echo = F, results = F, warning = F, message = F, fig.height = 8, fig.width = 8}
+```{r Response times and accuracy, echo = F, results = F, warning = F, message = F, fig.height = 8, fig.width = 8}
 source("FUNCTIONS/mean.cl.boot.R")
 
 ### Prepare data
@@ -410,6 +408,7 @@ dprime_plot = ggplot(subjwise_perf_oddball_both, aes(span, dprime, fill = span, 
 RT_plot = ggplot(cor_subjwise_perf_set, aes(span, RT, group = set, color = set)) +
   theme_bw() +
   stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "pointrange") +
+  # stat_summary(fun.data = mean.cl.boot, fun.args = list(B = 2000, tr = .2, ci = .68), geom = "pointrange") +
   scale_color_manual(values = c("dark grey", "dark orange")) +
   labs(x = "", y = "RT (msec)") +
   scale_x_discrete(labels = c("0sp", "1sp", "2sp", "3sp")) +
@@ -1042,19 +1041,18 @@ t.test(subset(odd_idx_dat12, ACC == "correct" & bigspan == "123span" & oddball =
 (t_span4_nS4_span0vs123 = t.test(pupil ~ bigspan, data = subset(odd_idx_dat12, ACC == "correct" & oddball == "noSET-4" & item == "Item4")))
 ```
 
-
-## Splitting participants into linear and u-shaped
-
-```{r, echo = F, message = F, warning = F}
+```{r Breaking participants into linear and u-shaped, echo = F, message = F, warning = F}
 ### Identify the two groups
-# Prepare data frames
-subj_regression_long = data.frame(Subject = NA, effect = NA, bin = NA, beta = NA)[0,]
-row_l = 1
-subj_regression_wide = data.frame(Subject = NA, bin = NA, beta_lin = NA, beta_qua = NA)[0,]
-row_w = 1
-
 # Run regressions for each subject to find linear and quadratic contrasts
+
 if (preprocess_data) {
+  # Prepare data frames
+  subj_regression_long = data.frame(Subject = NA, effect = NA, bin = NA, beta = NA)[0,]
+  row_l = 1
+  subj_regression_wide = data.frame(Subject = NA, bin = NA, beta_lin = NA, beta_qua = NA)[0,]
+  row_w = 1
+  r_squared = data.frame(Subject = NA, bin = NA, r_sqr = NA)
+
   for (subj in unique(allfiles$Subject)) {
     subj_dat = subset(allfiles,
                       Subject == subj & ACC == 1 & bin_time >= 3 & bin_time <= 6, #& span != "0span" & set == "SET" 
@@ -1078,18 +1076,25 @@ if (preprocess_data) {
       subj_regression_long[row_l,]   = c(subj, "linear",    bin, beta_lin)
       subj_regression_long[row_l+1,] = c(subj, "quadratic", bin, -beta_qua) #beta_ush
       
-      subj_regression_wide[row_w,]    = c(subj, bin, beta_lin, -beta_qua)
+      subj_regression_wide[row_w,]   = c(subj, bin, beta_lin, -beta_qua)
     
+      r_squared[row_w,] = c(subj, bin, summary(spanModel)$r.squared)
+      
       row_l = row_l + 2
       row_w = row_w + 1
     }
   }
   write.csv(subj_regression_long, "subj_regression_long.csv")
   write.csv(subj_regression_wide, "subj_regression_wide.csv")
+  write.csv(r_squared, "r_squared.csv")
 } else {
   subj_regression_long = read.csv("subj_regression_long.csv")
   subj_regression_wide = read.csv("subj_regression_wide.csv")
+  r_squared = read.csv("r_squared.csv")
 }
+
+mean_r = ddply(subset(r_squared), .(Subject), summarize,
+               r = mean(r_sqr))
 
 # Fix regression data
 subj_regression_long$bin = as.numeric(as.character(subj_regression_long$bin))
@@ -1838,15 +1843,13 @@ t.test(nS4_minus_SET ~ ppg, data = subset(odd_idx_dat13_wide, item == "Item4" & 
 (t_span4_nS4_span0vs123 = t.test(pupil ~ bigspan, data = subset(odd_idx_dat12, ACC == "correct" & oddball == "noSET-4" & item == "Item4")))
 ```
 
-## Compare performance between the two groups
-
-```{r, echo = F, warning = F, message = F}
+```{r Compare performance between the two groups, echo = F, warning = F, message = F}
 ### Prepare data
 # s_perf_ppg = merge(subjwise_perf_oddball, gdat)
 s_perf_ppg = merge(subjwise_perf_set,
                    subset(gdat, select = c(Subject, ppg)))
 s_perf_ppg_cor = merge(cor_subjwise_perf_set,
-                   subset(gdat, select = c(Subject, ppg)))
+                       subset(gdat, select = c(Subject, ppg)))
 s_perf_ppg = s_perf_ppg[order(s_perf_ppg$Subject, s_perf_ppg$set, s_perf_ppg$span),]
 s_perf_ppg_cor = s_perf_ppg_cor[order(s_perf_ppg_cor$Subject, s_perf_ppg_cor$set, s_perf_ppg_cor$span),]
 s_perf_dprime = merge(subset(s_perf_ppg, set == "SET", select = -set),
@@ -2222,24 +2225,34 @@ subjwise_SET_perf = ddply(subset(trialwise_perf, oddball == "SET"), .(Subject), 
                           SET_RT = median(RT, na.rm = T),
                           SET_ACC = mean(as.numeric(as.character(ACC)), na.rm = T))
 
-subjwise_SET_perf$ACC_group = "96-100%"
-subjwise_SET_perf$ACC_group[subjwise_SET_perf$SET_ACC < .95] = "65-95%"
+subjwise_SET_perf$ACC_group = NA
+subjwise_SET_perf$ACC_group[subjwise_SET_perf$SET_ACC >= .95] = "high"
+subjwise_SET_perf$ACC_group[subjwise_SET_perf$SET_ACC < .9] = "low"
+subjwise_SET_perf$ACC_group = factor(subjwise_SET_perf$ACC_group, levels = c("high", "low"))
 
 subjwise_SET_perf$RT_group = "fast"
 subjwise_SET_perf$RT_group[subjwise_SET_perf$SET_RT > median(subjwise_SET_perf$SET_RT, na.rm = T)] = "slow"
+subjwise_SET_perf$RT_group = factor(subjwise_SET_perf$RT_group, levels = c("slow", "fast"))
 
 # Add groups to pupil data
 pupildat_SET_ACC1 = merge(subset(pupildat, ACC == 1 & oddball == "SET", select = c("Subject", "span", "rel.time", "rel.pupil")),
                           subset(subjwise_SET_perf, select = c("Subject", "SET_RT", "SET_ACC", "ACC_group", "RT_group")),
                           by = c("Subject"), all.x = T, sort = F)
-pupildat_SET_ACC1$ACC_group = factor(pupildat_SET_ACC1$ACC_group)
+pupildat_SET_ACC1$ACC_group = factor(pupildat_SET_ACC1$ACC_group, levels = c("high", "low"))
 pupildat_SET_ACC1$RT_group = factor(pupildat_SET_ACC1$RT_group)
 
-# Get number of Ss in each group
-print(levels(pupildat_SET_ACC1$ACC_group)[1])
-length(unique(subset(pupildat_SET_ACC1, ACC_group == levels(pupildat_SET_ACC1$ACC_group)[1])$Subject))
-print(levels(pupildat_SET_ACC1$ACC_group)[2])
-length(unique(subset(pupildat_SET_ACC1, ACC_group == levels(pupildat_SET_ACC1$ACC_group)[2])$Subject))
+# Descriptives
+subjwise_SET_perf = merge(subjwise_SET_perf, gdat, all.x = T)
+# ppg
+with(subjwise_SET_perf, table(ACC_group, ppg))
+# ACC
+mean(1 - subjwise_SET_perf$SET_ACC); sd(subjwise_SET_perf$SET_ACC); length(unique(subjwise_SET_perf$Subject))
+mean(1 - subset(subjwise_SET_perf, ACC_group == "high")$SET_ACC); sd(subset(subjwise_SET_perf, ACC_group == "high")$SET_ACC); length(unique(subset(subjwise_SET_perf, ACC_group == "high")$Subject))
+mean(1 - subset(subjwise_SET_perf, ACC_group == "low")$SET_ACC); sd(subset(subjwise_SET_perf, ACC_group == "low")$SET_ACC); length(unique(subset(subjwise_SET_perf, ACC_group == "low")$Subject))
+# RTs
+mean(subjwise_SET_perf$SET_RT); sd(subjwise_SET_perf$SET_RT); length(unique(subjwise_SET_perf$Subject))
+mean(subset(subjwise_SET_perf, ACC_group == "high")$SET_RT); hist(subset(subjwise_SET_perf, ACC_group == "high")$SET_RT); sd(subset(subjwise_SET_perf, ACC_group == "high")$SET_RT); length(unique(subset(subjwise_SET_perf, ACC_group == "high")$Subject))
+mean(subset(subjwise_SET_perf, ACC_group == "low")$SET_RT); sd(subset(subjwise_SET_perf, ACC_group == "low")$SET_RT); length(unique(subset(subjwise_SET_perf, ACC_group == "low")$Subject))
 
 print(levels(pupildat_SET_ACC1$RT_group)[1])
 length(unique(subset(pupildat_SET_ACC1, RT_group == levels(pupildat_SET_ACC1$RT_group)[1])$Subject))
@@ -2270,8 +2283,9 @@ gg_bw_inlay = ggplot(bw_inlay_dat, aes(span, pupil4, fill = span)) +
   theme_bw() +
   stat_summary(fun.y = mean, geom = 'bar') +
   stat_summary(fun.data = mean_se, geom = 'pointrange') +
-  scale_fill_brewer(palette = "RdYlBu") +
+  scale_fill_manual(values = span_colors) +
   labs(x = "", y = "Pupil dilation Item4") +
+  scale_x_discrete(labels = c("0sp", "1sp", "2sp", "3sp")) +
   theme(legend.position = "none") +
   facet_grid(~ ACC_group)
   
@@ -2286,23 +2300,30 @@ gg_fs_inlay = gg_bw_inlay +
 pupildat_SET_ACC1_good = subset(pupildat_SET_ACC1, SET_ACC >= .95)
 pupildat_SET_ACC1_good$RT_group = "slow"
 pupildat_SET_ACC1_good$RT_group[pupildat_SET_ACC1_good$SET_RT < median(pupildat_SET_ACC1_good$SET_RT)] = "fast"
-pupildat_SET_ACC1_good$RT_group = factor(pupildat_SET_ACC1_good$RT_group)
+pupildat_SET_ACC1_good$RT_group = factor(pupildat_SET_ACC1_good$RT_group, levels = c("slow", "fast"))
 
 pupildat_SET_ACC1_bad = subset(pupildat_SET_ACC1, SET_ACC < .95)
 pupildat_SET_ACC1_bad$RT_group = "slow"
 pupildat_SET_ACC1_bad$RT_group[pupildat_SET_ACC1_bad$SET_RT < median(pupildat_SET_ACC1_bad$SET_RT)] = "fast"
 pupildat_SET_ACC1_bad$RT_group = factor(pupildat_SET_ACC1_bad$RT_group)
+pupildat_SET_ACC1_bad$RT_group = factor(pupildat_SET_ACC1_bad$RT_group, levels = c("slow", "fast"))
 
-# Get number of Ss in each group
-print(levels(pupildat_SET_ACC1_good$RT_group)[1])
-length(unique(subset(pupildat_SET_ACC1_good, RT_group == levels(pupildat_SET_ACC1_good$RT_group)[1])$Subject))
-print(levels(pupildat_SET_ACC1_good$RT_group)[2])
-length(unique(subset(pupildat_SET_ACC1_good, RT_group == levels(pupildat_SET_ACC1_good$RT_group)[2])$Subject))
-
-# Get median RTs
-median(pupildat_SET_ACC1_good$SET_RT)
-median(subset(pupildat_SET_ACC1_good, RT_group == "fast")$SET_RT)
-median(subset(pupildat_SET_ACC1_good, RT_group == "slow")$SET_RT)
+# Descriptives
+descr_dat = ddply(pupildat_SET_ACC1_good, .(Subject, ACC_group, RT_group), summarize,
+                  SET_ACC = mean(SET_ACC, na.rm = T),
+                  SET_RT = mean(SET_RT, na.rm = T))
+descr_dat = merge(descr_dat, gdat, all.x = T)
+# ppg
+with(descr_dat, table(RT_group, ppg))
+binom.test(13, 14)
+# RTs
+median(descr_dat$SET_RT); sd(descr_dat$SET_RT); length(descr_dat$SET_RT)
+mean(subset(descr_dat, RT_group == "fast")$SET_RT); sd(subset(descr_dat, RT_group == "fast")$SET_RT); length(subset(descr_dat, RT_group == "fast")$SET_RT)
+mean(subset(descr_dat, RT_group == "slow")$SET_RT); sd(subset(descr_dat, RT_group == "slow")$SET_RT); length(subset(descr_dat, RT_group == "slow")$SET_RT)
+# ACC
+median(1 - descr_dat$SET_ACC); sd(descr_dat$SET_ACC)
+median(1 - subset(descr_dat, RT_group == "fast")$SET_ACC); sd(subset(descr_dat, RT_group == "fast")$SET_ACC)
+median(1 - subset(descr_dat, RT_group == "slow")$SET_ACC); sd(subset(descr_dat, RT_group == "slow")$SET_ACC)
 
 ### Plot good Ss
 gg_better_fast_slow_pupils = ggplot(pupildat_SET_ACC1_good, aes(rel.time, rel.pupil, color = span, fill = span)) +
@@ -2327,8 +2348,9 @@ gg_bfs_inlay = ggplot(bw_inlay_dat, aes(span, pupil4, fill = span)) +
   theme_bw() +
   stat_summary(fun.y = mean, geom = 'bar') +
   stat_summary(fun.data = mean_se, geom = 'pointrange') +
-  scale_fill_brewer(palette = "RdYlBu") +
+  scale_fill_manual(values = span_colors) +
   labs(x = "", y = "Pupil dilation Item4") +
+  scale_x_discrete(labels = c("0sp", "1sp", "2sp", "3sp")) +
   theme(legend.position = "none") +
   facet_grid( ~ RT_group)
 
@@ -2343,8 +2365,8 @@ gg_worse_fast_slow_pupils = ggplot(pupildat_SET_ACC1_bad, aes(rel.time, rel.pupi
   scale_x_continuous(breaks = seq(0, 9, 1.5)) +
   stat_summary(fun.y = mean, geom = 'point') +
   stat_summary(fun.data = mean_se, geom = 'smooth', alpha = 0.2) +
-  scale_color_brewer(palette = "RdYlBu") +
-  scale_fill_brewer(palette = "RdYlBu") +
+  scale_color_manual(values = span_colors) +
+  scale_fill_manual(values = span_colors) +
   labs(x = 'Time (s)', y = 'TEPR (mm)', color = ' ', fill = ' ') +
   theme(legend.position = c(.4, .9), legend.background = element_rect(fill = "transparent")) +
   facet_grid( ~ RT_group)
@@ -2355,8 +2377,9 @@ gg_wfs_inlay = ggplot(bw_inlay_dat, aes(span, pupil4, fill = span)) +
   theme_bw() +
   stat_summary(fun.y = mean, geom = 'bar') +
   stat_summary(fun.data = mean_se, geom = 'pointrange') +
-  scale_fill_brewer(palette = "RdYlBu") +
+  scale_fill_manual(values = span_colors) +
   labs(x = "", y = "Pupil dilation Item4") +
+  scale_x_discrete(labels = c("0sp", "1sp", "2sp", "3sp")) +
   theme(legend.position = "none") +
   facet_grid( ~ RT_group)
 
@@ -2368,12 +2391,13 @@ if (ggsave_figures) {
   plot(gg_bw_inlay)
   plot(gg_fs_inlay)
   plot(gg_bfs_inlay)
-  ggsave(plot = gg_better_worse_pupils, paste(figure_dir, "/gg_better_worse_pupils.png", sep = ""), width = 9, height = 5)
-  ggsave(plot = gg_fast_slow_pupils, paste(figure_dir, "/gg_fast_slow_pupils.png", sep = ""), width = 9, height = 5)
-  ggsave(plot = gg_better_fast_slow_pupils, paste(figure_dir, "/gg_better_fast_slow_pupils.png", sep = ""), width = 9, height = 5)
-  ggsave(plot = gg_bw_inlay, paste(figure_dir, "/gg_bw_inlay.png", sep = ""), width = 3, height = 2.5)
-  ggsave(plot = gg_fs_inlay, paste(figure_dir, "/gg_fs_inlay.png", sep = ""), width = 3, height = 2.5)
-  ggsave(plot = gg_bfs_inlay, paste(figure_dir, "/gg_bfs_inlay.png", sep = ""), width = 3, height = 2.5)
+  ggsave(plot = gg_better_worse_pupils, paste(figure_dir, "/FigS3_better_worse_pupils.png", sep = ""), width = 9, height = 5)
+  ggsave(plot = gg_fast_slow_pupils, paste(figure_dir, "/FigS3_fast_slow_pupils.png", sep = ""), width = 9, height = 5)
+  ggsave(plot = gg_better_fast_slow_pupils, paste(figure_dir, "/FigS3_better_fast_slow_pupils.png", sep = ""), width = 9, height = 5)
+  ggsave(plot = gg_worse_fast_slow_pupils, paste(figure_dir, "/FigS3_worse_fast_slow_pupils.png", sep = ""), width = 9, height = 5)
+  ggsave(plot = gg_bw_inlay, paste(figure_dir, "/FigS3_bw_inlay.png", sep = ""), width = 3, height = 2.5)
+  ggsave(plot = gg_fs_inlay, paste(figure_dir, "/FigS3_fs_inlay.png", sep = ""), width = 3, height = 2.5)
+  ggsave(plot = gg_bfs_inlay, paste(figure_dir, "/FigS3_bfs_inlay.png", sep = ""), width = 3, height = 2.5)
 }
 
 
@@ -2388,7 +2412,7 @@ if (ggsave_figures) {
 #                         median_RT = median(RT, na.rm = T))
 # subjwise_above  = merge(subjwise_above, spanwise_above, by = c("set", "span"))
 trialwise_above = merge(trialwise_perf, subjwise_SET_perf, by = c("Subject"), suff = c("", "_span"))
-trialwise_above = subset(trialwise_above, ACC_group == "96-100%")
+trialwise_above = subset(trialwise_above, ACC_group == "high")
 subjwise_above  = ddply(trialwise_above, .(Subject, set, span), summarize,
                         RT = mean(RT, na.rm = T))
 spanwise_above  = ddply(subjwise_above, .(set, span), summarize,
