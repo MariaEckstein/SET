@@ -1,4 +1,4 @@
-n_items = 4
+n_items = 3
 
 library("permute")
 library("combinat")
@@ -525,7 +525,7 @@ rand_span3_noSETs = span3_noSETs[sample(nrow(span3_noSETs)),]
 ### Get the right number of trials
 number_lat   = length(c("LL", "LR", "MM", "RL", "RR"))
 number_set   = length(c("SET", "noSET"))
-number_spans = length(0:3)
+number_spans = 2  #length(0:3)
 number_trials_per = 10
 trial_duration = 2
 
