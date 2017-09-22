@@ -1,0 +1,532 @@
+---
+title: "SET"
+author: "Maria Eckstein"
+date: "January 3, 2015"
+output:
+  pdf_document:
+    fig_caption: yes
+    number_sections: yes
+    toc: yes
+  html_document:
+    fig_caption: yes
+    number_sections: yes
+    toc: yes
+---
+  
+
+```{r, echo = F, results = F, warning = F, message = F}
+
+##################
+#                #
+#   USER INPUT   #
+#                #
+##################
+
+analyze_simulations = T   # If TRUE, simulated agents are analyzed instead of human participants!
+exclude_poor_subjects = F
+preprocess_data = F                              # If TRUE, reads in raw data (.gazedata format), preprocesses it (removes outliers and interpolates pupil data, bins into 50ms pieces, etc.), and creates and saves an all_files data file that contains the raw data from all subjects
+ggsave_figures = T
+
+
+data_year = "learn"
+item_presentation_start = c(0,   1,   2)
+item_presentation_end   = c(0.5, 1.5, 2.5)
+response_prompt_time    = item_presentation_end[length(item_presentation_end)] + .5
+trial_duration = response_prompt_time + 3
+source("FUNCTIONS/dprime.R")
+dprime_cutoff = dprime(hits = 0.6, false.alarms = 0.4)
+
+
+
+
+######################
+#                    #
+#   PREPARE DATA &   #
+#   LOAD PACKAGES    #
+#                    #
+######################
+
+### Load packages
+library("plyr"); library("zoo"); library("gridExtra"); library("reshape"); library("simpleboot")
+source("FUNCTIONS/median.cl.boot.R"); source("FUNCTIONS/mean.cl.boot.R"); source("FUNCTIONS/dprime.R")
+
+### Get plot colours
+bw_colors = c("#999999", "#000000")
+span_colors = colorRampPalette(c("blue", "yellow"))
+raw_file_dir = "C:/Users/maria/MEGAsync/Berkeley/R scripts/sequentialset/subj_files/learnSET/raw_data/"
+preprocessing_output_dir = "C:/Users/maria/MEGAsync/Berkeley/R scripts/sequentialset/subj_files/learnSET/"
+setwd("C:/Users/maria/MEGAsync/Berkeley/R scripts/sequentialset")
+allfiles_dir = "C:/Users/maria/MEGAsync/Berkeley/R scripts/sequentialset/"
+if (analyze_simulations) {
+  figure_dir = "C:/Users/maria/MEGAsync/Berkeley/learnSET/ChurchCode/plots"
+} else {
+  figure_dir = "C:/Users/maria/MEGAsync/Berkeley/R scripts/sequentialset/learnSETplots"
+}
+
+### Set plot dimensions
+one_by_three = data.frame(width = 5, height = 2.5)
+one_by_two = data.frame(width = 3.5, height = 2.5)
+one_by_one = data.frame(width = 2, height = 2.3)
+pupil_two  = data.frame(width = 6, height = 2.5)
+pupil_one  = data.frame(width = 3.5, height = 2.5)
+
+### Prepare / load data
+if (preprocess_data) {
+  
+  # Read in .gazedata files, filter&interpolate, cut into trials, calculate relative pupil dilation, etc.
+  source("FUNCTIONS/preprocess_gazedata_files.R")
+  filter_stats = preprocess_gazedata_files(inputfile_directory = raw_file_dir,
+                  input_filename_pattern = "learnSET",
+                  inputfile_format = ".gazedata",
+                  m_trial_duration = trial_duration,
+                  output_filename = "learnSET",
+                  outputfile_directory = preprocessing_output_dir,
+                  FUNCTION_dir = "C:/Users/maria/MEGAsync/Berkeley/R scripts/sequentialset/FUNCTIONS",
+                  filter_and_interpolate_max_interp = 12,
+                  smooth_times = 3,
+                  relative_pupil_baseline_window = c(0, 0.3),
+                  data_year = data_year)
+  filter_stats
+  
+  # Create allfiles, which contains all preprocessed subj_files (write .csv and get as object)
+  source("FUNCTIONS/create_allfiles.R")
+  allfiles = create_allfiles(inputfile_directory = preprocessing_output_dir, 
+                             outputfile_directory = allfiles_dir,
+                             data_year = data_year)
+  
+} else {
+  
+  # Read allfiles from disk
+  if (analyze_simulations) {
+    allfiles = read.csv("C:/Users/maria/MEGAsync/Berkeley/learnSET/ChurchCode/simulations5.csv", header = T)
+    colnames(allfiles)[colnames(allfiles) %in% c("SimulationID", "TrialID")] = c("Subject", "TrialId")
+    allfiles$set = allfiles$Prediction
+    allfiles$set[allfiles$ACC == 0] = ifelse(allfiles$set[allfiles$ACC == 0] == 'SET', 'noSET', 'SET')
+    allfiles$set = factor(allfiles$set)
+    allfiles$rule = NA
+    allfiles$RT = 30
+    allfiles$span = factor(allfiles$span, labels = c("0span", "1span", "2span", "3span"))
+    allfiles = subset(allfiles, TrialId < 12 * 11)
+    
+  } else {
+  allfiles = read.csv(file.path(allfiles_dir, paste("preprocessed_allfiles_", data_year, ".csv", sep = "")), header = T)
+  allfiles         = subset(allfiles, bin_time <= trial_duration)
+  allfiles$set     = factor(allfiles$set, levels = c("wudsy", "non-wudsy"), labels = c("SET", "noSET"))
+  allfiles$bin_time = round(allfiles$bin_time, 2)
+  allfiles$rules_broken[is.na(allfiles$rules_broken)] = "0"
+  }
+}
+
+allfiles$rules_broken = factor(allfiles$rules_broken)
+# Each block has 4 SETs (0-3-span) and 7 noSETs (1 x 0-span, 2 x 3-span, 2 x 1-span, 2 x 2-span)
+# Trials 46 and 47 and 92 and 93 are break trials
+last_trials_of_block = seq(12, 137, 11)
+last_trials_of_block[last_trials_of_block > 46] = last_trials_of_block[last_trials_of_block > 46] + 2
+last_trials_of_block[last_trials_of_block > 92] = last_trials_of_block[last_trials_of_block > 92] + 2
+named_blocks = rev(last_trials_of_block[c(1, 2, 3, 4, 8, 12)])
+
+allfiles$block = NA
+for (blockx in named_blocks) {
+  allfiles$block[allfiles$TrialId <= blockx] = blockx
+}
+allfiles$block = factor(allfiles$block, levels = rev(named_blocks), labels = c("1", "2", "3", "4", "5-8", "9-12"))
+allfiles_orig = allfiles
+
+```
+
+# Performance for each participant
+
+```{r, echo = F, results = F, warning = F, message = F, fig.cap = "Performance of individual subjects"}
+library("ggplot2")
+theme_set(theme_bw())
+
+if (analyze_simulations) {
+  allfiles = subset(allfiles, Subject <= 20)
+}
+
+## Prepare data
+trial_data = ddply(allfiles, .(Subject, TrialId, block, set, span, rule, rules_broken), summarize,
+                   ACC = mean(ACC, na.rm = T),
+                   RT  = median(RT, na.rm = T))
+
+## ACCs
+subject_ACCs = ggplot(trial_data, aes(Subject, ACC, color = span, fill = span)) +
+  stat_summary(fun.y = "mean", geom = "bar", position = "dodge") +
+  scale_x_continuous(breaks = seq(min(trial_data$Subject), max(trial_data$Subject))) +
+  scale_color_brewer(palette = "RdYlBu") +
+  scale_fill_brewer(palette = "RdYlBu") +
+  facet_wrap(~ set, nrow = 2)
+
+## RTs
+subject_RTs = ggplot(subset(trial_data, ACC == 1), aes(Subject, RT, color = span, fill = span)) +
+  stat_summary(fun.y = "median", geom = "bar", position = "dodge") +
+  scale_x_continuous(breaks = seq(min(trial_data$Subject), max(trial_data$Subject))) +
+  scale_color_brewer(palette = "RdYlBu") +
+  scale_fill_brewer(palette = "RdYlBu") +
+  facet_wrap(~ set, nrow = 2)
+
+if (ggsave_figures) {
+  # Print to pdf (when knitting)
+  plot(subject_ACCs)
+  plot(subject_RTs)
+  # Safe into folder
+  ggsave(plot = subject_ACCs, filename = file.path(figure_dir, "01subject_ACCs.png"), width = 20, height = 5)
+  ggsave(plot = subject_RTs,  filename = file.path(figure_dir, "01subject_RTs.png"),  width = 20, height = 5)
+}
+```
+
+# Prepare data; exclude
+
+```{r, echo = F, results = F, warning = F, message = F}
+### Get performance data for SETs and noSETs for each subject (BEFORE excluding subjects)
+# Get subject average accuracies
+subject_data = ddply(trial_data, .(Subject, set), summarize,
+                        ACC = mean(ACC, na.rm = T))
+subject_data_wide = reshape(subset(subject_data, select = c("Subject", "set", "ACC")),
+        v.names = "ACC", idvar = "Subject", timevar = "set", direction = "wide")
+subject_data_wide$dprime = with(subject_data_wide, dprime(hits = ACC.SET, false.alarms = (1 - ACC.noSET)))
+
+# Get subject acuracies per span
+span_data = ddply(trial_data, .(Subject, set, span), summarize,
+                        ACC = mean(ACC, na.rm = T))
+span_data_cor = ddply(subset(trial_data, ACC == 1), .(Subject, set, span), summarize,
+                           RT  = median(RT, na.rm = T))
+
+span_data_wide = reshape(subset(span_data, select = c("Subject", "set", "span", "ACC")),
+        v.names = "ACC", idvar = c("Subject", "span"), timevar = "set", direction = "wide")
+span_data_wide$dprime = with(span_data_wide, dprime(hits = ACC.SET, false.alarms = (1 - ACC.noSET)))
+span_data_wide$Hits_minus_FA = with(span_data_wide, ACC.SET - (1 - ACC.noSET)) # same as d-prime!
+span_data_wide$SETACCnoSETACC = with(span_data_wide, ACC.SET - ACC.noSET)
+
+span_data_cor_wide = reshape(subset(span_data_cor, select = c("Subject", "set", "span", "RT")),
+        v.names = "RT", idvar = c("Subject", "span"), timevar = "set", direction = "wide")
+span_data_wide$SETRTnoSETRT = with(span_data_cor_wide, RT.SET - RT.noSET)
+
+# Get the chance performers
+span_chance_performers = unique(subset(span_data_wide, dprime < dprime_cutoff)$Subject)
+overall_chance_performers = unique(subset(subject_data_wide, dprime < dprime_cutoff)$Subject)
+
+### Find subjects who need to be excluded based on their weak performance
+chance_performers = unique(c(overall_chance_performers, span_chance_performers))
+
+# Delete excluded subjects
+if (exclude_poor_subjects) {
+  allfiles = allfiles[!allfiles$Subject %in% chance_performers,]
+}
+
+# Exclude subject 115 because this person already performed perfectly at the begging, i.e., was not learning
+if (analyze_simulations) {
+  allfiles = allfiles_orig
+} else {
+  allfiles = dim(allfiles[!allfiles$Subject == 115,])
+}
+
+### Get performance data for SETs and noSETs for each subject (AFTER excluding subjects)
+# Trialwise data
+trial_data = ddply(allfiles, .(Subject, TrialId, block, set, span, rule, rules_broken), summarize,
+                   ACC = mean(ACC, na.rm = T),
+                   RT  = median(RT, na.rm = T))
+# Get subject average accuracies
+subject_data = ddply(trial_data, .(Subject, set), summarize,
+                        ACC = mean(ACC, na.rm = T))
+subject_data_wide = reshape(subset(subject_data, select = c("Subject", "set", "ACC")),
+        v.names = "ACC", idvar = "Subject", timevar = "set", direction = "wide")
+subject_data_wide$dprime = with(subject_data_wide, dprime(hits = ACC.SET, false.alarms = (1 - ACC.noSET)))
+# Get subject acuracies per span
+span_data = ddply(trial_data, .(Subject, set, span), summarize,
+                        ACC = mean(ACC, na.rm = T))
+span_data_cor = ddply(subset(trial_data, ACC == 1), .(Subject, set, span), summarize,
+                           RT  = median(RT, na.rm = T))
+
+span_data_wide = reshape(subset(span_data, select = c("Subject", "set", "span", "ACC")),
+        v.names = "ACC", idvar = c("Subject", "span"), timevar = "set", direction = "wide")
+span_data_wide$dprime = with(span_data_wide, dprime(hits = ACC.SET, false.alarms = (1 - ACC.noSET)))
+span_data_wide$Hits_minus_FA = with(span_data_wide, ACC.SET - (1 - ACC.noSET)) # same as d-prime!
+span_data_wide$SETACCnoSETACC = with(span_data_wide, ACC.SET - ACC.noSET)
+
+span_data_cor_wide = reshape(subset(span_data_cor, select = c("Subject", "set", "span", "RT")),
+        v.names = "RT", idvar = c("Subject", "span"), timevar = "set", direction = "wide")
+span_data_wide$SETRTnoSETRT = with(span_data_cor_wide, RT.SET - RT.noSET)
+```
+
+# Average Task Performance
+
+```{r, echo = F, results = F, warning = F, message = F, fig.cap = "Effect of span"}
+## ACCs
+ACCs = ggplot(span_data, aes(span, (1 - ACC) * 100, color = set, group = set)) +
+  stat_summary(fun.data = "mean_se", geom = "pointrange") +
+  scale_color_manual(values = bw_colors) +
+  scale_x_discrete(labels = c("0sp", "1sp", "2sp", "3sp")) +
+  coord_cartesian(ylim = c(0, 50)) +
+  labs(x = "", y = "Errors (%)") +
+  theme(legend.position = "none") +
+  facet_grid(~ set)
+
+SETACCnoSETACC = ggplot(span_data_wide, aes(span, SETACCnoSETACC * 100)) +
+  stat_summary(fun.data = "mean_se", geom = "pointrange") +
+  theme(legend.position = "none") +
+  scale_x_discrete(labels = c("0sp", "1sp", "2sp", "3sp")) +
+  labs(x = "", y = "SET ACC - noSET ACC")
+
+gg_dprime = ggplot(span_data_wide, aes(span, dprime, fill = span)) +
+  stat_summary(fun.data = "mean_se", geom = "pointrange") +
+  theme(legend.position = "none") +
+  scale_x_discrete(labels = c("0sp", "1sp", "2sp", "3sp")) +
+  labs(x = "", y = "d-prime")
+
+## RTs
+RTs = ggplot(span_data_cor, aes(span, RT, color = set)) +
+  stat_summary(fun.data = "median.cl.boot", fun.args = list(B = 2000, tr = .2, ci = .68), geom = "pointrange") +
+  scale_color_manual(values = bw_colors) +
+  scale_x_discrete(labels = c("0sp", "1sp", "2sp", "3sp")) +
+  theme(legend.position = "none") +
+  labs(x = "", y = "RT (msec)") +
+  facet_grid(~ set)
+
+SETRTnoSETRT = ggplot(span_data_wide, aes(span, SETRTnoSETRT)) +
+  stat_summary(fun.data = "median.cl.boot", fun.args = list(B = 2000, tr = .2, ci = .68), geom = "pointrange") +
+  scale_color_manual(values = bw_colors) +
+  scale_x_discrete(labels = c("0sp", "1sp", "2sp", "3sp")) +
+  theme(legend.position = "none") +
+  labs(x = "", y = "SET RT - noSET RT (msec)")
+
+if (ggsave_figures) {
+  # Print to pdf (when knitting)
+  plot(ACCs)
+  plot(RTs)
+  plot(SETACCnoSETACC)
+  plot(SETRTnoSETRT)
+  plot(gg_dprime)
+  # Safe into folder
+  ggsave(plot = ACCs, filename = file.path(figure_dir, "02ACCs.png"), width = one_by_two$width, height = one_by_two$height)
+  ggsave(plot = RTs,  filename = file.path(figure_dir, "02RTs.png"),  width = one_by_two$width, height = one_by_two$height)
+  ggsave(plot = SETACCnoSETACC, filename = file.path(figure_dir, "03SETACCnoSETACC.png"), width = one_by_one$width, height = one_by_two$height)
+  ggsave(plot = SETRTnoSETRT, filename = file.path(figure_dir, "03SETRTnoSETRT.png"), width = one_by_one$width, height = one_by_two$height)
+  ggsave(plot = gg_dprime, filename = file.path(figure_dir, "03dprime.png"), width = one_by_one$width, height = one_by_two$height)
+}
+```
+
+# Effect of rules
+
+```{r, echo = F, results = F, warning = F, message = F, fig.cap = "Effect of rules"}
+### Prepare data
+rule_number = ddply(trial_data, .(Subject, span, set, block, rules_broken), summarize,
+                         ACC = mean(ACC, na.rm = T))
+rule_number_cor = ddply(subset(trial_data, ACC == 1), .(Subject, span, set, block, rules_broken), summarize,
+                         RT = mean(RT, na.rm = T))
+
+matchspan = ddply(trial_data, .(Subject, span, set, block, rule), summarize,
+                         ACC = mean(ACC, na.rm = T))
+matchspan_cor = ddply(subset(trial_data, ACC == 1), .(Subject, span, set, block, rule), summarize,
+                         RT = mean(RT, na.rm = T))
+
+### Plots
+# ACC
+gg_rule_number_ACC = ggplot(rule_number, aes(block, 100 * (1 - ACC), group = rules_broken, color = rules_broken, fill = rules_broken)) +
+  scale_color_brewer(type = "seq") +
+  scale_fill_brewer(type = "seq") +
+  labs(x = "Iteration", y = "Error rate (%)", color = "# rules broken", fill = "# rules broken") +
+  theme(legend.position = "none") +
+  stat_summary(fun.data = mean_se, geom = "smooth")
+
+gg_matchspan_ACC = ggplot(matchspan, aes(block, 1 - ACC, group = rule, color = rule, fill = rule)) +
+  labs(x = "Iteration", y = "Error rate (%)", color = "Broken rule", fill = "Broken rule") +
+  theme(legend.position = "none") +
+  stat_summary(fun.data = mean_se, geom = "smooth")
+
+# RT
+gg_rule_number_RT = ggplot(rule_number_cor, aes(block, RT, group = rules_broken, color = rules_broken, fill = rules_broken)) +
+  scale_color_brewer(type = "seq") +
+  scale_fill_brewer(type = "seq") +
+  labs(x = "Iteration", y = "RT (msec)", color = "# rules broken", fill = "# rules broken") +
+  theme(legend.position = "none") +
+  stat_summary(fun.data = mean_se, geom = "smooth")
+gg_matchspan_RT = ggplot(matchspan_cor, aes(block, RT, group = rule, color = rule, fill = rule)) +
+  labs(x = "Iteration", y = "RT (msec)", color = "Broken rule", fill = "Broken rule") +
+  theme(legend.position = "none") +
+  stat_summary(fun.data = mean_se, geom = "smooth")
+
+if (ggsave_figures) {
+  # Print to pdf (when knitting)
+  plot(gg_rule_number_ACC)
+  plot(gg_matchspan_ACC)
+  plot(gg_rule_number_RT)
+  plot(gg_matchspan_RT)
+  # Safe into folder
+  ggsave(plot = gg_rule_number_ACC, filename = file.path(figure_dir, "04gg_rule_number_ACC.png"), width = one_by_two$width, height = one_by_two$height)
+  ggsave(plot = gg_matchspan_ACC,  filename = file.path(figure_dir, "04gg_matchspan_ACC.png"),  width = one_by_two$width, height = one_by_two$height)
+  ggsave(plot = gg_rule_number_RT, filename = file.path(figure_dir, "04gg_rule_number_RT.png"), width = one_by_two$width, height = one_by_two$height)
+  ggsave(plot = gg_matchspan_RT,  filename = file.path(figure_dir, "04gg_matchspan_RT.png"),  width = one_by_two$width, height = one_by_two$height)
+}
+```
+
+# Effect of practice
+
+```{r, echo = F, results = F, warning = F, message = F, fig.cap = "Effect of span over blocks"}
+source("FUNCTIONS/dprime.R")
+### Prepare data
+span_block_data = ddply(trial_data, .(Subject, block, set, span, block, rule), summarize,
+                  ACC = mean(ACC, na.rm = T))
+
+span_block_data_cor = ddply(subset(trial_data, ACC == 1), .(Subject, block, set, span, block, rule), summarize,
+                  RT  = median(RT, na.rm = T))
+
+span_block_data_wide = reshape(span_block_data, v.names = "ACC", timevar = "set", idvar = c("Subject", "block", "span"), direction = "wide")
+span_block_data_wide$dprime = with(span_block_data_wide, dprime(ACC.SET, (1 - ACC.noSET)))
+span_block_data_wide$SETACCnoSETACC = with(span_block_data_wide, ACC.SET - ACC.noSET)
+
+## ACCs
+x = 1; y = 1
+block_ACCs = ggplot(span_block_data, aes(block, ACC * 100, fill = span, color = span, group = span)) +
+  stat_summary(fun.data = "mean_se", geom = "smooth", alpha = .1) +
+  scale_color_brewer(palette = "RdYlBu") +
+  scale_fill_brewer(palette = "RdYlBu") +
+  theme(legend.position = "none") +
+  coord_cartesian(ylim = c(0, 100)) +
+  labs(x = "Iteration", y = "Correct responses (%)") +
+  facet_grid( ~ set)
+
+# block_dprime = ggplot(span_block_data_wide, aes(block, dprime, color = span, fill = span, group = span)) +
+#   stat_summary(fun.data = "mean_se", geom = "smooth", alpha = .1) +
+#   scale_color_brewer(palette = "RdYlBu") +
+#   scale_fill_brewer(palette = "RdYlBu") +
+#   theme(legend.position = "none") +
+#   labs(x = "Iteration", y = "d-prime")
+# 
+# block_SETACCnoSETACC = ggplot(span_block_data_wide, aes(block, SETACCnoSETACC, color = span, fill = span, group = span)) +
+#   stat_summary(fun.data = "mean_se", geom = "smooth", alpha = .1) +
+#   scale_color_brewer(palette = "RdYlBu") +
+#   scale_fill_brewer(palette = "RdYlBu") +
+#   theme(legend.position = "none") +
+#   labs(x = "Iteration", y = "SET ACC - noSET ACC (%)")
+
+## RTs
+block_RTs = ggplot(span_block_data_cor, aes(block, RT, color = span, fill = span, group = span)) +
+  # stat_summary(fun.data = "median.cl.boot", fun.args = list(B = 2000, tr = .2, ci = .68), geom = "smooth", alpha = .1) +
+  stat_summary(fun.data = mean_cl_boot, geom = "smooth", alpha = .1) +
+  scale_color_brewer(palette = "RdYlBu") +
+  scale_fill_brewer(palette = "RdYlBu") +
+  theme(legend.position = "none") +
+  labs(x = "Iteration", y = "RTs (msec)") +
+  facet_grid( ~ rule)
+
+if (ggsave_figures) {
+  # Print to pdf (when knitting)
+  plot(block_ACCs)
+  # plot(block_dprime)
+  # plot(block_SETACCnoSETACC)
+  plot(block_RTs)
+  # Safe into folder
+  ggsave(plot = block_ACCs, filename = file.path(figure_dir, "07block_ACCs.png"), width = one_by_three$width + 1, height = one_by_three$height)
+  ggsave(plot = block_RTs,  filename = file.path(figure_dir, "07block_RTs.png"),  width = one_by_three$width + 1, height = one_by_three$height)
+  # ggsave(plot = block_dprime, filename = file.path(figure_dir, "08block_dprime.png"), width = one_by_one$width + 1, height = one_by_one$height)
+  # ggsave(plot = block_SETACCnoSETACC,   filename = file.path(figure_dir, "08block_SETACCnoSETACC.png"),   width = one_by_one$width + 1, height = one_by_one$height)
+}
+```
+
+# Pupil dilation
+
+```{r, echo = F, warning = F, message = F, fig.height = 5, fig.width = 10, fig.cap = "Time course of pupil dilation over the complete trial, averaged for correctly answered SETs and noSETs."}
+### Prepare data
+pupil = ddply(subset(allfiles, ACC == 1), .(Subject, set, span, rules_broken, rule, bin_time), summarize,
+                   RT  = median(RT,  na.rm = T),
+                   roll_pupil = mean(roll_pupil, na.rm = T),
+                   rel_pupil  = mean(rel_pupil, na.rm  = T))
+pupil_incor = ddply(subset(allfiles, ACC == 0), .(Subject, set, span, bin_time), summarize,
+                   ACC = mean(ACC, na.rm = T),
+                   roll_pupil = mean(roll_pupil, na.rm = T),
+                   rel_pupil  = mean(rel_pupil, na.rm  = T))
+
+pupil_block = ddply(subset(allfiles, ACC == 1), .(Subject, block, set, span, bin_time), summarize,
+                   RT  = mean(RT,  na.rm = T),
+                   roll_pupil = mean(roll_pupil, na.rm = T),
+                   rel_pupil  = mean(rel_pupil, na.rm  = T))
+pupil_block_incor = ddply(subset(allfiles, ACC == 0), .(Subject, block, set, span, bin_time), summarize,
+                   ACC = mean(ACC, na.rm = T),
+                   roll_pupil = mean(roll_pupil, na.rm = T),
+                   rel_pupil  = mean(rel_pupil, na.rm  = T))
+
+### Prepare plots
+# Trial events
+x = 0; y = 1
+tile_x_center = (item_presentation_start + item_presentation_end) / 2
+tile_y_center = rep(0, length(item_presentation_start))
+tile_width    = item_presentation_end - item_presentation_start
+tile_height   = rep(Inf, length(item_presentation_start))
+tile_data     = data.frame(x = tile_x_center, y = tile_y_center, width = tile_width, height = tile_height)
+# Pupil dilation
+gg_pupil = ggplot(pupil, aes(bin_time, rel_pupil, color = span, fill = span)) +
+  stat_summary(fun.y = mean, geom = 'point') +
+  stat_summary(fun.data = mean_se, geom = 'smooth', alpha = 0.2) +
+  scale_color_brewer(palette = "RdYlBu") +
+  scale_fill_brewer(palette = "RdYlBu") +
+  labs(x = 'Time (s)', y = 'TEPR (mm)', color = ' ', fill = ' ') +
+  theme(legend.position = "none") +
+  facet_grid(~ set) +
+  geom_tile(data = tile_data, aes(x = x, y = y, width = width, height = height), inherit.aes = F, alpha = .1) +
+  geom_vline(xintercept = response_prompt_time)
+
+gg_pupil_incor = ggplot(pupil_incor, aes(bin_time, rel_pupil, color = span, fill = span)) +
+  stat_summary(fun.y = mean, geom = 'point') +
+  stat_summary(fun.data = mean_se, geom = 'smooth', alpha = 0.2) +
+  scale_color_brewer(palette = "RdYlBu") +
+  scale_fill_brewer(palette = "RdYlBu") +
+  labs(x = 'Time (s)', y = 'TEPR (mm)', color = ' ', fill = ' ') +
+  theme(legend.position = "none") +
+  facet_grid(~ set) +
+  geom_tile(data = tile_data, aes(x = x, y = y, width = width, height = height), inherit.aes = F, alpha = .1) +
+  geom_vline(xintercept = response_prompt_time)
+
+if (ggsave_figures) {
+  # Print to pdf (when knitting)
+  plot(gg_pupil)
+  plot(gg_pupil_incor)
+  # Safe into folder
+  ggsave(plot = gg_pupil, filename = file.path(figure_dir, "09gg_pupil.png"), width = pupil_two$width, height = pupil_two$height)
+  ggsave(plot = gg_pupil_incor, filename = file.path(figure_dir, "09gg_pupil_incor.png"), width = pupil_two$width, height = pupil_two$height)
+}
+```
+
+```{r}
+library(FactoMineR)
+SETsnoSETs = data.frame(s1 = NA, s2 = NA, s3 = NA, c1 = NA, c2 = NA, c3 = NA, f1 = NA, f2 = NA, f3 = NA, SnS = NA)[0,]
+
+matches = list(c('a', 'a', 'a'), c('b', 'b', 'b'), c('c', 'c', 'c'))
+spans = list(c('a', 'b', 'c'), c('a', 'c', 'b'), c('b', 'a', 'c'), c('b', 'c', 'a'), c('c', 'a', 'b'), c('c', 'b', 'a'))
+no_rule = list(c('a', 'a', 'b'), c('a', 'b', 'a'), c('b', 'a', 'a'), c('a', 'b', 'b'), c('b', 'a', 'b'), c('b', 'b', 'a'), c('a', 'a', 'c'), c('a', 'c', 'a'), c('c', 'a', 'a'), c('a', 'c', 'c'), c('c', 'a', 'c'), c('c', 'c', 'a'), c('b', 'b', 'c'), c('b', 'c', 'b'), c('c', 'b', 'b'), c('b', 'c', 'c'), c('c', 'b', 'c'), c('c', 'c', 'b'))
+  
+row = 1
+for (col in c(matches, spans)) {
+  for (shape in c(matches, spans)) {
+    for (fill in c(matches, spans)) {
+      SETsnoSETs[row,] = c(col, shape, fill, 'SET')
+      row = row + 1
+    }
+  }
+}
+
+for (col in no_rule) {
+  for (shape in no_rule) {
+    for (fill in no_rule) {
+      SETsnoSETs[row,] = c(col, shape, fill, 'noSET')
+      row = row + 1
+    }
+  }
+}
+
+# SETsnoSETs = subset(SETsnoSETs, select = -SnS)
+SETsnoSETs$s1 = factor(SETsnoSETs$s1)
+SETsnoSETs$s2 = factor(SETsnoSETs$s3)
+SETsnoSETs$s3 = factor(SETsnoSETs$s3)
+SETsnoSETs$c1 = factor(SETsnoSETs$c1)
+SETsnoSETs$c2 = factor(SETsnoSETs$c3)
+SETsnoSETs$c3 = factor(SETsnoSETs$c3)
+SETsnoSETs$f1 = factor(SETsnoSETs$f1)
+SETsnoSETs$f2 = factor(SETsnoSETs$f3)
+SETsnoSETs$f3 = factor(SETsnoSETs$f3)
+SnSmca = MCA(SETsnoSETs)
+
+summary(SnSmca)
+
+```
+
