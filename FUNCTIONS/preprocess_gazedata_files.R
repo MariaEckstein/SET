@@ -129,7 +129,7 @@ preprocess_gazedata_files = function(inputfile_directory, input_filename_pattern
     if (save_saccade_trials) {
       subj_saccade_trials = subset(subj_file, saccade_trial == T)
       if (nrow(subj_saccade_trials) > 0) {
-        write.csv(subj_saccade_trials, paste(outputfile_directory, "preprocessing_data/saccade_trials_", subj_file$Subject[1], ".csv", sep = ""), row.names = F)
+        write.csv(subj_saccade_trials, paste(outputfile_directory, "/preprocessing_data/saccade_trials_", subj_file$Subject[1], ".csv", sep = ""), row.names = F)
       }
     }
     # Save number of outside fixations and saccade trials to filer_stats data.frame
@@ -167,7 +167,7 @@ preprocess_gazedata_files = function(inputfile_directory, input_filename_pattern
     colnames(subj_file)[colnames(subj_file) %in% c("Category", "SETornoSET", "number_of_rules_broken", "rule_broken", "Position_false_shape")] = c("span", "set", "rules_broken", "rule", "oddball")
     
     ### Save the file
-    write.csv(subj_file, paste(outputfile_directory, "preprocessed_", filename, sep = ""), row.names = F)
+    write.csv(subj_file, paste(outputfile_directory, "/preprocessed_", filename, sep = ""), row.names = F)
   }
   
   ### Return filter_stats
