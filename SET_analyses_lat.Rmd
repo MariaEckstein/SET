@@ -127,7 +127,28 @@ allfiles$set     = factor(allfiles$set, levels = c("SET", "noSET"))
 # Lateralization label determines hemisphere, not presentation
 allfiles$lateralization = factor(allfiles$lateralization, levels = c("BI", "LL", "RR", "LR", "RL"), labels = c("BI", "RRR", "LLL", "RLR", "LRL"))
 # TDs!
+
+## Add block column
+# blocks = seq(22,400,20)
+# for (block in blocks) {
+#   if (trial > block) {
+#     
+#   }
+# }
+
+## Add the mouse_hand column
+# allfiles$mouse_hand = NA
+# for (subj in unique(allfiles$subject)) {
+#   subj_file = subset(allfiles, subject == subj)
+#   subj_ID = subj_file$subject[1]
+#   if (subj_ID %% 2) {
+#     subj_file$mouse_hand = 
+#   }
+# }
+
 allfiles$mouse_hand = factor(allfiles$mouse_hand)
+
+
 allfiles$program_version = factor(allfiles$program_version)
 ```
 
