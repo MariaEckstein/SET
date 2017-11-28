@@ -37,7 +37,7 @@ exclude_slow_trials = F        # Should be F because RTs are changing so much ov
 analyze_saccade_trials = F     # If TRUE, makes a plot of fixation location for each (excluded) saccade trial
 preprocess_data = F            # If TRUE, reads in raw data (.gazedata format), preprocesses it (removes outliers and interpolates pupil data, bins into 50ms pieces, etc.), and creates and saves an all_files data file that contains the raw data from all subjects
 ggsave_figures = T
-run_regression_models = T
+run_regression_models = F
 allfiles_dir = "C:/Users/Maria/MEGAsync/Berkeley/R scripts/sequentialset/"
 setwd(allfiles_dir)
 figure_dir = paste("C:/Users/Maria/Dropbox/Patricia_Maria_Silvia/latSETPlots", data_year, "/", sep = "")
@@ -102,15 +102,6 @@ if (preprocess_data) {
   allfiles = create_allfiles(inputfile_directory = preprocessing_output_dir, 
                              outputfile_directory = allfiles_dir,
                              data_year = data_year)
-  if (!"mouse_hand" %in% colnames(allfiles)) {
-    allfiles$mouse_hand = "right"
-    allfiles$mouse_hand[allfiles$Subject %in% c(seq(406, 442, 4), seq(407, 443, 4), 454)] = "left"
-    allfiles$mouse_hand[allfiles$Subject == 443] = "right"
-  }
-  if (!"program_version" %in% colnames(allfiles)) {
-    allfiles$program_version = "A"
-    allfiles$program_version[allfiles$Subject %in% seq(407, 444, 2)] = "B"
-  }
   write.csv(allfiles, file.path(allfiles_dir, paste("preprocessed_allfiles_", data_year, ".csv", sep = "")), row.names = F)
   
 } else {
@@ -124,31 +115,39 @@ if (preprocess_data) {
 allfiles         = subset(allfiles, bin_time <= trial_duration)
 allfiles$bin_time= round(allfiles$bin_time, 2)
 allfiles$set     = factor(allfiles$set, levels = c("SET", "noSET"))
-# Lateralization label determines hemisphere, not presentation
-allfiles$lateralization = factor(allfiles$lateralization, levels = c("BI", "LL", "RR", "LR", "RL"), labels = c("BI", "RRR", "LLL", "RLR", "LRL"))
-# TDs!
+allfiles$lateralization = factor(allfiles$lateralization, levels = c("BI", "LL", "RR", "LR", "RL"), labels = c("BI", "RRR", "LLL", "RLR", "LRL"))  # Make such that lateralization label determines hemisphere, not presentation side
 
-## Add block column
-# blocks = seq(22,400,20)
-# for (block in blocks) {
-#   if (trial > block) {
-#     
-#   }
-# }
+if (data_year == "2016") {
 
-## Add the mouse_hand column
-# allfiles$mouse_hand = NA
-# for (subj in unique(allfiles$subject)) {
-#   subj_file = subset(allfiles, subject == subj)
-#   subj_ID = subj_file$subject[1]
-#   if (subj_ID %% 2) {
-#     subj_file$mouse_hand = 
-#   }
-# }
+  ## Add mouse_hand column
+  allfiles$mouse_hand = "right"
+  allfiles$mouse_hand[allfiles$Subject %in% c(seq(406, 442, 4), seq(407, 443, 4), 454)] = "left"
+  allfiles$mouse_hand[allfiles$Subject == 443] = "right"
+
+  ## Add program_version column
+  allfiles$program_version = "A"
+  allfiles$program_version[allfiles$Subject %in% seq(407, 444, 2)] = "B"
+  
+} else if (data_year == "2017") {
+  
+  ## Add block column
+  allfiles$block = 6
+  allfiles$block[allfiles$TrialId <= 300] = 5
+  allfiles$block[allfiles$TrialId <= 240] = 4
+  allfiles$block[allfiles$TrialId <= 180] = 3
+  allfiles$block[allfiles$TrialId <= 120] = 2
+  allfiles$block[allfiles$TrialId <=  60] = 1
+
+  ## Add mouse_hand column
+  allfiles$mouse_hand = "L"
+  allfiles$mouse_hand[allfiles$Subject %% 2 == 0 & allfiles$block %% 2 == 0] = "R"  #if Subject id is even, even blocks should be "R"
+  allfiles$mouse_hand[allfiles$Subject %% 2 == 1 & allfiles$block %% 2 == 1] = "R"  #if Subject id is odd, odd blocks should be "R"
+
+  ## Add program_version column
+  allfiles$program_version = NA  # TD
+}
 
 allfiles$mouse_hand = factor(allfiles$mouse_hand)
-
-
 allfiles$program_version = factor(allfiles$program_version)
 ```
 
@@ -330,7 +329,7 @@ Left handers: `r left_handers`
 ```{r ACC, RT by span, echo = F, results = F, warning = F, message = F, fig.cap = "Effect of span"}
 ## ACCs
 ACCs = ggplot(span_data, aes(span, (1 - ACC) * 100, color = set, group = set)) +
-  geom_point(alpha = 0.5, position = "jitter") +
+  # geom_point(alpha = 0.5, position = "jitter") +
   stat_summary(fun.data = "mean_se", geom = "pointrange") +
   scale_color_manual(values = bw_colors) +
   # scale_x_discrete(labels = c("0sp", "1sp", "2sp", "3sp")) +
@@ -339,14 +338,14 @@ ACCs = ggplot(span_data, aes(span, (1 - ACC) * 100, color = set, group = set)) +
   facet_grid(~ set)
 
 SETACCnoSETACC = ggplot(span_data_wide, aes(span, SETACCnoSETACC * 100)) +
-  geom_point(alpha = 0.5, position = "jitter") +
+  # geom_point(alpha = 0.5, position = "jitter") +
   stat_summary(fun.data = "mean_se", geom = "pointrange") +
   theme(legend.position = "none") +
   # scale_x_discrete(labels = c("0sp", "1sp", "2sp", "3sp")) +
   labs(x = "", y = "SET ACC - noSET ACC")
 
 dprime = ggplot(span_data_wide, aes(span, dprime, fill = span)) +
-  geom_point(alpha = 0.5, position = "jitter") +
+  # geom_point(alpha = 0.5, position = "jitter") +
   stat_summary(fun.data = "mean_se", geom = "pointrange") +
   theme(legend.position = "none") +
   # scale_x_discrete(labels = c("0sp", "1sp", "2sp", "3sp")) +
@@ -354,7 +353,7 @@ dprime = ggplot(span_data_wide, aes(span, dprime, fill = span)) +
 
 ## RTs
 RTs = ggplot(span_data_cor, aes(span, RT, color = set)) +
-  geom_point(alpha = 0.5, position = "jitter") +
+  # geom_point(alpha = 0.5, position = "jitter") +
   stat_summary(fun.data = "median.cl.boot", fun.args = list(B = 2000, tr = .2, ci = .68), geom = "pointrange") +
   scale_color_manual(values = bw_colors) +
   # scale_x_discrete(labels = c("0sp", "1sp", "2sp", "3sp")) +
@@ -363,7 +362,7 @@ RTs = ggplot(span_data_cor, aes(span, RT, color = set)) +
   facet_grid(~ set)
 
 SETRTnoSETRT = ggplot(span_data_wide, aes(span, SETRTnoSETRT)) +
-  geom_point(alpha = 0.5, position = "jitter") +
+  # geom_point(alpha = 0.5, position = "jitter") +
   stat_summary(fun.data = "median.cl.boot", fun.args = list(B = 2000, tr = .2, ci = .68), geom = "pointrange") +
   scale_color_manual(values = bw_colors) +
   # scale_x_discrete(labels = c("0sp", "1sp", "2sp", "3sp")) +
@@ -409,7 +408,7 @@ lat_data_cor_wide$RTSETminusnoSET = with(lat_data_cor_wide, RT.SET - RT.noSET)
 ### Plot
 ## ACCs
 base_plot = ggplot() +
-  geom_point(alpha = 0.5, position = "jitter") +
+  # geom_point(alpha = 0.5, position = "jitter") +
   stat_summary(fun.data = "mean_se", geom = "pointrange")
 
 base_plot$data = lat_data
@@ -474,15 +473,15 @@ sum_data_cor_wide$RTSETminusnoSET = with(sum_data_cor_wide, RT.SET - RT.noSET)
 ### Plot
 ## ACCs
 lat_ACCs_big_subj = ggplot(trial_data, aes(span, lateralization, color = factor(ACC), shape = span)) +
-  geom_point(position = "jitter") +
+  # geom_point(position = "jitter") +
   facet_grid(Subject ~ set)
 
 ACC_base_plot = ggplot() +
-  geom_point(alpha = 0.5, position = "jitter") +
+  # geom_point(alpha = 0.5, position = "jitter") +
   stat_summary(fun.data = "mean_se", geom = "pointrange") +
   stat_summary(fun.data = "mean_se", geom = "line") +
-  # scale_color_brewer(palette = "RdYlBu") +
-  # scale_fill_brewer(palette = "RdYlBu") +
+  scale_color_brewer(palette = "RdYlBu") +
+  scale_fill_brewer(palette = "RdYlBu") +
   theme(legend.position = "none") #c(.8, .8))
 
 ACC_base_plot$data = sum_data
@@ -502,11 +501,11 @@ lat_SETACCnoSETACC_big = lat_dprime_big +
 
 ## RTs
 RT_base_plot = ggplot() +
-  geom_point(alpha = 0.5, position = "jitter") +
+  # geom_point(alpha = 0.5, position = "jitter") +
   stat_summary(fun.data = "median.cl.boot", fun.args = list(B = 2000, tr = .2, ci = .68), geom = "pointrange") +
   stat_summary(fun.data = "median.cl.boot", fun.args = list(B = 2000, tr = .2, ci = .68), geom = "line") +
-  # scale_color_brewer(palette = "RdYlBu") +
-  # scale_fill_brewer(palette = "RdYlBu") +
+  scale_color_brewer(palette = "RdYlBu") +
+  scale_fill_brewer(palette = "RdYlBu") +
   theme(legend.position = "none")
 
 RT_base_plot$data = sum_data_cor
@@ -1470,7 +1469,7 @@ pupil_data = ddply(subset(allfiles, ACC == 1), .(Subject, set, span, lateralizat
                    rel_pupil  = mean(rel_pupil, na.rm  = T))
 SETnoSET_pupil = reshape(subset(pupil_data, select = -c(roll_pupil, RT)),
                          v.names = c("rel_pupil"), idvar = c("Subject", "span", "lateralization", "bin_time"), timevar = c("set"), direction = "wide")
-SETnoSET_pupil$SET_minus_noSET = with(SETnoSET_pupil, rel_pupil.SET - rel_pupil.noSET)
+SETnoSET_pupil$noSET_minus_SET = with(SETnoSET_pupil, rel_pupil.noSET - rel_pupil.SET)
 
 ### Prepare plots
 # Trial events
@@ -1506,12 +1505,12 @@ gg_pupil_lat = ggplot(pupil_data, aes(bin_time, rel_pupil, color = lateralizatio
   facet_grid(~ set)
 
 # Differences between SET and noSET
-gg_pupil_set_diff = ggplot(SETnoSET_pupil, aes(bin_time, SET_minus_noSET, color = span, fill = span)) +
+gg_pupil_set_diff = ggplot(SETnoSET_pupil, aes(bin_time, noSET_minus_SET, color = span, fill = span)) +
   stat_summary(fun.y = mean, geom = 'point') +
   stat_summary(fun.data = mean_se, geom = 'smooth', alpha = 0.2) +
   scale_color_brewer(palette = "RdYlBu") +
   scale_fill_brewer(palette = "RdYlBu", guide = FALSE) +
-  labs(x = 'Time (s)', y = 'SET TEPR - noSET TEPR', color = ' ', fill = ' ') +
+  labs(x = 'Time (s)', y = 'noSET TEPR - SET TEPR', color = ' ', fill = ' ') +
   theme(legend.position = "none") +
   geom_tile(data = tile_data, aes(x = x, y = y, width = width, height = height), inherit.aes = F, alpha = .1) +
   geom_vline(xintercept = response_prompt_time)
