@@ -22,13 +22,15 @@ output:
 #                #
 ##################
 
+# TD: look at ACC & RTs within-subjects: subtract L blocks from R blocks
+
 data_year = "2017"
 item_presentation_start = c(.1, .3, .5)
 item_presentation_end   = c(.2, .4, .6)
 response_prompt_time    = .7
 trial_duration = response_prompt_time + 3
 
-analysis_model = "lme"         # choose between 'aov', 'lme', 'lmer', 'hierarchicallmer'
+analysis_model = "lmer"         # choose between 'aov', 'lme', 'lmer', 'hierarchicallmer'
 exclude_poor_subjects = T      # Should be T
 exclude_left_handers = T       # Should be T
 exclude_saccade_trials = T     # Should be T
@@ -37,7 +39,7 @@ exclude_slow_trials = F        # Should be F because RTs are changing so much ov
 analyze_saccade_trials = F     # If TRUE, makes a plot of fixation location for each (excluded) saccade trial
 preprocess_data = F            # If TRUE, reads in raw data (.gazedata format), preprocesses it (removes outliers and interpolates pupil data, bins into 50ms pieces, etc.), and creates and saves an all_files data file that contains the raw data from all subjects
 ggsave_figures = T
-run_regression_models = F
+run_regression_models = T
 allfiles_dir = "C:/Users/Maria/MEGAsync/Berkeley/R scripts/sequentialset/"
 setwd(allfiles_dir)
 figure_dir = paste("C:/Users/Maria/Dropbox/Patricia_Maria_Silvia/latSETPlots", data_year, "/", sep = "")
@@ -62,7 +64,11 @@ source("FUNCTIONS/median.cl.boot.R"); source("FUNCTIONS/mean.cl.boot.R"); source
 
 ### Get plot colours
 bw_colors = c("#999999", "#000000")
-span_colors = colorRampPalette(c("blue", "yellow"))
+span_colors = colorRampPalette(c("white", "green", "black"))
+span_colors = span_colors(9)[5:8]
+if (data_year == "2017") {
+  span_colors = span_colors[c(2, 4)]
+}
 preprocessing_output_dir = file.path(allfiles_dir, paste("subj_files/data", data_year, sep = ""))
 raw_file_dir = file.path(preprocessing_output_dir, "raw_data")
 preprocessing_data_dir = file.path(preprocessing_output_dir, "preprocessing_data")
@@ -139,9 +145,9 @@ if (data_year == "2016") {
   allfiles$block[allfiles$TrialId <=  60] = 1
 
   ## Add mouse_hand column
-  allfiles$mouse_hand = "L"
-  allfiles$mouse_hand[allfiles$Subject %% 2 == 0 & allfiles$block %% 2 == 0] = "R"  #if Subject id is even, even blocks should be "R"
-  allfiles$mouse_hand[allfiles$Subject %% 2 == 1 & allfiles$block %% 2 == 1] = "R"  #if Subject id is odd, odd blocks should be "R"
+  allfiles$mouse_hand = "left"
+  allfiles$mouse_hand[allfiles$Subject %% 2 == 0 & allfiles$block %% 2 == 0] = "right"  #if Subject id is even, even blocks should be "R"
+  allfiles$mouse_hand[allfiles$Subject %% 2 == 1 & allfiles$block %% 2 == 1] = "right"  #if Subject id is odd, odd blocks should be "R"
 
   ## Add program_version column
   allfiles$program_version = NA  # TD
@@ -196,23 +202,19 @@ raw_trial_data = ddply(allfiles, .(Subject, TrialId, set, span, lateralization, 
 subject_ACCs = ggplot(raw_trial_data, aes(Subject, ACC, color = span, fill = span)) +
   stat_summary(fun.y = "mean", geom = "bar", position = "dodge") +
   scale_x_continuous(breaks = seq(min(raw_trial_data$Subject), max(raw_trial_data$Subject))) +
-  scale_color_brewer(palette = "RdYlBu") +
-  scale_fill_brewer(palette = "RdYlBu") +
+  scale_color_manual(values = span_colors) +
+  scale_fill_manual(values = span_colors) +
   facet_wrap(~ set, nrow = 2)
 
 ## RTs
 subject_RTs = ggplot(subset(raw_trial_data, ACC == 1), aes(Subject, RT, color = span, fill = span)) +
   stat_summary(fun.y = "median", geom = "bar", position = "dodge") +
   scale_x_continuous(breaks = seq(min(raw_trial_data$Subject), max(raw_trial_data$Subject))) +
-  scale_color_brewer(palette = "RdYlBu") +
-  scale_fill_brewer(palette = "RdYlBu") +
+  scale_color_manual(values = span_colors) +
+  scale_fill_manual(values = span_colors) +
   facet_wrap(~ set, nrow = 2)
 
 if (ggsave_figures) {
-  # Print to pdf (when knitting)
-  plot(subject_ACCs)
-  plot(subject_RTs)
-  # Safe into folder
   ggsave(plot = subject_ACCs, filename = file.path(figure_dir, "01subject_ACCs.png"), width = 20, height = 5)
   ggsave(plot = subject_RTs,  filename = file.path(figure_dir, "01subject_RTs.png"),  width = 20, height = 5)
 }
@@ -333,6 +335,7 @@ ACCs = ggplot(span_data, aes(span, (1 - ACC) * 100, color = set, group = set)) +
   stat_summary(fun.data = "mean_se", geom = "pointrange") +
   scale_color_manual(values = bw_colors) +
   # scale_x_discrete(labels = c("0sp", "1sp", "2sp", "3sp")) +
+  coord_cartesian(ylim = c(0, 30)) +
   labs(x = "", y = "Errors (%)") +
   theme(legend.position = "none") +
   facet_grid(~ set)
@@ -342,6 +345,7 @@ SETACCnoSETACC = ggplot(span_data_wide, aes(span, SETACCnoSETACC * 100)) +
   stat_summary(fun.data = "mean_se", geom = "pointrange") +
   theme(legend.position = "none") +
   # scale_x_discrete(labels = c("0sp", "1sp", "2sp", "3sp")) +
+  coord_cartesian(ylim = c(-18, 10)) +
   labs(x = "", y = "SET ACC - noSET ACC")
 
 dprime = ggplot(span_data_wide, aes(span, dprime, fill = span)) +
@@ -349,6 +353,7 @@ dprime = ggplot(span_data_wide, aes(span, dprime, fill = span)) +
   stat_summary(fun.data = "mean_se", geom = "pointrange") +
   theme(legend.position = "none") +
   # scale_x_discrete(labels = c("0sp", "1sp", "2sp", "3sp")) +
+  coord_cartesian(ylim = c(2.35, 3.4)) +
   labs(x = "", y = "d-prime")
 
 ## RTs
@@ -357,6 +362,7 @@ RTs = ggplot(span_data_cor, aes(span, RT, color = set)) +
   stat_summary(fun.data = "median.cl.boot", fun.args = list(B = 2000, tr = .2, ci = .68), geom = "pointrange") +
   scale_color_manual(values = bw_colors) +
   # scale_x_discrete(labels = c("0sp", "1sp", "2sp", "3sp")) +
+  coord_cartesian(ylim = c(0, 800)) +
   theme(legend.position = "none") +
   labs(x = "", y = "RT (msec)") +
   facet_grid(~ set)
@@ -366,6 +372,7 @@ SETRTnoSETRT = ggplot(span_data_wide, aes(span, SETRTnoSETRT)) +
   stat_summary(fun.data = "median.cl.boot", fun.args = list(B = 2000, tr = .2, ci = .68), geom = "pointrange") +
   scale_color_manual(values = bw_colors) +
   # scale_x_discrete(labels = c("0sp", "1sp", "2sp", "3sp")) +
+  coord_cartesian(ylim = c(-130, 130)) +
   theme(legend.position = "none") +
   labs(x = "", y = "SET RT - noSET RT (msec)")
 
@@ -414,22 +421,26 @@ base_plot = ggplot() +
 base_plot$data = lat_data
 lat_ACCs = base_plot +
   aes(lateralization, (1 - ACC) * 100 ) +
+  coord_cartesian(ylim = c(0, 24)) +
   labs(x = "", y = "Errors (%)") +
   facet_grid(~ set)
 
 base_plot$data = lat_data_wide
 lat_SETACCnoSETACC = base_plot +
   aes(lateralization, ACCSETminusnoSET * 100) +
+  coord_cartesian(ylim = c(-18, 10)) +
   labs(x = "", y = "SET ACC - noSET ACC")
 
 lat_dprime = lat_SETACCnoSETACC +
   aes(lateralization, dprime) +
+  coord_cartesian(ylim = c(2.2, 2.9)) +
   labs(x = "", y = "d-prime")
 
 ## RTs
 base_plot$data = lat_data_cor
 lat_RTs = base_plot +
   aes(lateralization, RT) +
+  coord_cartesian(ylim = c(500, 1000)) +
   # stat_summary(fun.data = "median.cl.boot", fun.args = list(B = 2000, tr = .2, ci = .68), geom = "pointrange") +
   labs(x = "", y = "RT (msec)") +
   facet_grid(~ set)
@@ -437,6 +448,7 @@ lat_RTs = base_plot +
 base_plot$data = lat_data_cor_wide
 lat_SETRTnoSETRT = base_plot +
   aes(lateralization, RTSETminusnoSET) +
+  coord_cartesian(ylim = c(-50, 350)) +
   labs(x = "", y = "SET RT - noSET RT")
   
 if (ggsave_figures) {
@@ -480,8 +492,8 @@ ACC_base_plot = ggplot() +
   # geom_point(alpha = 0.5, position = "jitter") +
   stat_summary(fun.data = "mean_se", geom = "pointrange") +
   stat_summary(fun.data = "mean_se", geom = "line") +
-  scale_color_brewer(palette = "RdYlBu") +
-  scale_fill_brewer(palette = "RdYlBu") +
+  scale_color_manual(values = span_colors) +
+  scale_fill_manual(values = span_colors) +
   theme(legend.position = "none") #c(.8, .8))
 
 ACC_base_plot$data = sum_data
@@ -504,8 +516,8 @@ RT_base_plot = ggplot() +
   # geom_point(alpha = 0.5, position = "jitter") +
   stat_summary(fun.data = "median.cl.boot", fun.args = list(B = 2000, tr = .2, ci = .68), geom = "pointrange") +
   stat_summary(fun.data = "median.cl.boot", fun.args = list(B = 2000, tr = .2, ci = .68), geom = "line") +
-  scale_color_brewer(palette = "RdYlBu") +
-  scale_fill_brewer(palette = "RdYlBu") +
+  scale_color_manual(values = span_colors) +
+  scale_fill_manual(values = span_colors) +
   theme(legend.position = "none")
 
 RT_base_plot$data = sum_data_cor
@@ -606,7 +618,7 @@ if (run_regression_models) {
   # contrasts(sum_data_reg$lateralization) = cbind(BIvALL, across, LLLvRRR, LRLvRLR)
   contrasts(sum_data_reg$lateralization) = cbind(BIvALL, l_dom, LLLvLRL, RRRvRLR)
   contrasts(sum_data_reg$set) = contr.sum(2)
-  contrasts(sum_data_reg$span) = contr.poly(4)
+  contrasts(sum_data_reg$span) = contr.poly(ifelse(data_year == "2016", 4, 2))
   contrasts(sum_data_reg$across) = contr.sum(2)
   contrasts(sum_data_reg$L_dom) = contr.sum(2)
   contrasts(sum_data_reg$mouse_hand) = contr.sum(2)
@@ -629,164 +641,80 @@ if (run_regression_models) {
   
   contrasts(trial_data$lateralization) = cbind(BIvALL, l_dom, LLLvLRL, RRRvRLR)
   contrasts(trial_data$set) = contr.sum(2)
-  contrasts(trial_data$span) = contr.poly(4)
+  contrasts(trial_data$span) = contr.poly(ifelse(data_year == "2016", 4, 2))
   contrasts(trial_data$across) = contr.sum(2)
   contrasts(trial_data$L_dom) = contr.sum(2)
   contrasts(trial_data$mouse_hand) = contr.sum(2)
-  contrasts(trial_data$program_version) = contr.sum(2)
+  if (data_year == "2016") {
+    contrasts(trial_data$program_version) = contr.sum(2)
+  }
   
-  # ggplot(sum_data_reg,
-  #        aes(across, RT, color = span, group = span)) +
-  #   stat_summary(fun.data = "mean_se", geom = "pointrange") +
-  #   stat_summary(fun.data = "mean_se", geom = "line") +
-  #   scale_color_brewer(palette = "RdYlBu") +
-  #   scale_fill_brewer(palette = "RdYlBu") +
-  #   theme(legend.position = "none") +
-  #   facet_grid(~ set)
-    
-  # Prepare data frame to save the regression results 
-  # regr_data_select = expand.grid(
-  #   effect = c("left_dominant", "across", "L_dom*across", "L_dom*span", "across*span"),
-  #   measure = c("ACC", "log_RT"),
-  #   set = c("SET", "noSET"),
-  #   chi2 = NA,
-  #   p = NA)
-  # 
-  # regr_data_full = expand.grid(
-  #   effect = c("left_dominant", "across", "mouse_hand", "L_dom*hand", "L_dom*span", "L_dom*across", "across*span", "across*hand"),
-  #   measure = c("ACC", "log_RT"),
-  #   set = c("SET", "noSET"),
-  #   chi2 = NA,
-  #   p = NA)
-  
-  # Run Models
-  if (analysis_model == "aov") {   # uses type-I SS because Anova(aov_mod, type = "III") doesn't work here
-    
-    aov_complete_formula = "log_RT ~ set * span * L_dom * across * mouse_hand + Error(Subject / (set * span * L_dom * across))"
-    aov_SET_formula      = "log_RT ~ span * L_dom * across * mouse_hand + Error(Subject / (span * L_dom * across))"
-    
-    aov_complete = aov(as.formula(aov_complete_formula), data = sum_data_reg)
-    summary(aov_complete)
-    aov_SET = aov(as.formula(aov_SET_formula), data = subset(sum_data_reg, set == "SET"))
-    summary(aov_SET)
-    aov_noSET = aov(as.formula(aov_SET_formula), data = subset(sum_data_reg, set == "noSET"))
-    summary(aov_noSET)
-    
-  } else if (analysis_model == "lme") {
-    
-    lme_com_formula = "~ (set + span + L_dom + across + mouse_hand) ^ 3"   # interactions up to third order
-    lme_SET_formula = "~ (span + L_dom + across + mouse_hand) ^ 2"   # interactions up to second order
-    lme_com_random  = "~ 1 | Subject/set/span/L_dom/across"
-    lme_SET_random  = "~ 1 | Subject/span/L_dom/across"
-    
-    # Predict RTs (normal regression works)
-    lme_com_form_RT = paste("RT", lme_com_formula)
-    lme_SET_form_RT = paste("RT", lme_SET_formula)
-    
-    lme_complete_l = lme(log_RT ~ (set + span + lateralization + mouse_hand) ^ 3, ~ 1 | Subject/set/span/lateralization, data = sum_data_reg, method = "ML")
-    anova.lme(lme_complete_l, type = "marginal", adjustSigma = F)
-    lme_complete = lme(as.formula(lme_com_form_RT), as.formula(lme_com_random), data = subset(sum_data_reg, lateralization != "BI"), method = "ML")
-    anova.lme(lme_complete, type = "marginal", adjustSigma = F)
-    lme_SET = lme(as.formula(lme_SET_form_RT), as.formula(lme_SET_random), data = subset(sum_data_reg, lateralization != "BI" & set == "SET"), method = "ML")
-    anova.lme(lme_SET, type = "marginal", adjustSigma = F)
-    summary(lme_SET)
-    lme_noSET = lme(as.formula(lme_SET_form_RT), as.formula(lme_SET_random), data = subset(sum_data_reg, lateralization != "BI" & set == "noSET"), method = "ML")
-    anova.lme(lme_noSET, type = "marginal", adjustSigma = F)
-    summary(lme_noSET)
-    
-    # Predict ACC (needs robust test or bootstrapping)
-    lme_com_form_ACC = paste("ACC", lme_com_formula)
-    lme_SET_form_ACC = paste("ACC", lme_SET_formula)
-    
-    bootsamples_com = boot(statistic = bootlme, formula = lme_com_form_ACC, random = lme_com_random, data = sum_data_reg, R = 2000)
-    bootsamples_SET = boot(statistic = bootlme, formula = lme_SET_form_ACC, random = lme_SET_random, data = subset(sum_data_reg, set == "SET"), R = 2000)
-    bootsamples_noSET = boot(statistic = bootlme, formula = lme_SET_form_ACC, random = lme_SET_random, data = subset(sum_data_reg, set == "noSET"), R = 2000)
-    
-    for (i in 1:length(bootsamples_com$t0)) {
-      com_coefficient = boot.ci(bootsamples_com, type = "bca", index = i)   # bca = bias corrected and accelerated; could also calculate regular CIs with quantile() or z-scoring!
-    }
-    for (i in seq(1, length(bootsamples_SET$t0))) {
-      SET_coefficient = boot.ci(bootsamples_SET, type = "bca", index = i)
-      noSET_coefficient = boot.ci(bootsamples_noSET, type = "bca", index = i)
-    }
-    
-  } else if (analysis_model == "lmer") {
-    
-    ### Regression formulas
+  ### Regression formulas
+  if (data_year == "2016") {
     lmer_com_formula = "~ (set + span + L_dom + across + mouse_hand) ^ 2 + ((set + span + L_dom + across) ^ 2 | Subject)"   # interactions up to third order
     lmer_SET_formula = "~ (span + L_dom + across + mouse_hand) ^ 2 + ((span + L_dom + across) ^ 2 | Subject)"
-    lmer_com_RT = paste("RT", lmer_com_formula)
-    lmer_SET_RT = paste("RT", lmer_SET_formula)
-    lmer_com_ACC = paste("ACC", lmer_com_formula)
-    lmer_SET_ACC = paste("ACC", lmer_SET_formula)
-    
-    ### RT models
-    lmer_complete = lmer(as.formula(lmer_com_RT), data = subset(trial_data, ACC == 1), REML = F, na.action = na.omit, control = lmerControl(optCtrl = list(maxfun = 1e6)), verbose = T)
-    summary(lmer_complete)
-    anova(lmer_complete, type = 3)
-    lmer_SET = lmer(as.formula(lmer_SET_RT), data = subset(trial_data, set == "SET" & ACC == 1), REML = F, na.action = na.omit, control = lmerControl(optCtrl = list(maxfun = 1e6)), verbose = T)
-    anova(lmer_SET, type = 3)
-    summary(lmer_SET)
-    # rlmer_SET = rlmer(as.formula(lmer_SET_RT), data = subset(trial_data, set == "SET" & ACC == 1), REML = F, na.action = na.omit, control = lmerControl(optCtrl = list(maxfun = 1e6)), verbose = T)
-    # anova(rlmer_SET, type = 3)
-    lmer_noSET = update(lmer_SET, data = subset(trial_data, set == "noSET" & ACC == 1)) #lmer(as.formula(lmer_SET_RT), data = subset(trial_data, set == "noSET" & ACC == 1), REML = F, na.action = na.omit, control = lmerControl(optCtrl = list(maxfun = 1e6)), verbose = T)
-    anova(lmer_noSET, type = 3)
-    summary(lmer_noSET)
-    
-    ### ACC models
-    glmer_complete = glmer(as.formula(lmer_com_ACC), data = trial_data, family = "binomial", verbose = T, control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e6)))
-    Anova(glmer_complete, type = "III")
-    summary(glmer_complete)
-    glmer_SET = glmer(as.formula(lmer_SET_ACC), data = subset(trial_data, set == "SET"), family = "binomial", verbose = T, control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e6)))
-    Anova(glmer_SET, type = "III")
-    summary(glmer_SET)
-    glmer_noSET = update(glmer_SET, data = subset(trial_data, set == "noSET")) #glmer(as.formula(lmer_SET_ACC), data = subset(trial_data, set == "noSET"), family = "binomial", verbose = T, control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e6)))
-    Anova(glmer_noSET, type = "III")
-    summary(glmer_noSET)
-    
-  } else if (analysis_model == "hierarchicallmer") {   # works, but takes the whole night to calculate
-    
-    baseline_lmer = lmer(log_RT ~ 1 + (span * L_dom * across | Subject), data = subset(trial_data, set == "SET" & ACC == 1), REML = F, na.action = na.omit, control = lmerControl(optCtrl = list(maxfun = 1e6)), verbose = T)
-    span_lmer = update(baseline_lmer, .~. + span)
-    L_dom_lmer = update(baseline_lmer, .~. + span + L_dom)
-    across_lmer = update(baseline_lmer, .~. + span + L_dom + across)
-    hand_lmer = update(baseline_lmer, .~. + span + L_dom + across + mouse_hand)
-    sp_x_Ld_lmer = update(baseline_lmer, .~. + span + L_dom + across + mouse_hand + span:L_dom)
-    sp_x_ac_lmer = update(baseline_lmer, .~. + span + L_dom + across + mouse_hand + span:L_dom + span:across)
-    ac_x_Ld_lmer = update(baseline_lmer, .~. + span + L_dom + across + mouse_hand + span:L_dom + span:across + across:L_dom)
-    complete_lmer= update(baseline_lmer, .~. +(span + L_dom + across + mouse_hand) ^ 2)
-  
-    ANOVA = anova(baseline_lmer, span_lmer, L_dom_lmer, across_lmer, hand_lmer, sp_x_Ld_lmer, sp_x_ac_lmer, ac_x_Ld_lmer, complete_lmer)
+  } else if (data_year == "2017") {
+    lmer_com_formula = "~ (set + span + L_dom + across + mouse_hand) ^ 2 + ((set + span + L_dom + across + mouse_hand) ^ 2 | Subject)"   # interactions up to third order
+    lmer_SET_formula = "~ (span + L_dom + across + mouse_hand) ^ 2 + ((span + L_dom + across + mouse_hand) ^ 2 | Subject)"
   }
+  lmer_com_RT = paste("RT", lmer_com_formula)
+  lmer_SET_RT = paste("RT", lmer_SET_formula)
+  lmer_com_ACC = paste("ACC", lmer_com_formula)
+  lmer_SET_ACC = paste("ACC", lmer_SET_formula)
+  
+  ### RT models
+  lmer_complete = lmer(as.formula(lmer_com_RT), data = subset(trial_data, ACC == 1), REML = F, na.action = na.omit, control = lmerControl(optCtrl = list(maxfun = 1e6)), verbose = T)
+  write.csv(as.data.frame(summary(lmer_complete)$coef), paste(figure_dir, "/lmer_complete_summary_", data_year, ".csv", sep = ""))
+  write.csv(as.data.frame(anova(lmer_complete, type = 3)), paste(figure_dir, "/lmer_complete_aov_", data_year, ".csv", sep = ""))
+  lmer_SET = lmer(as.formula(lmer_SET_RT), data = subset(trial_data, set == "SET" & ACC == 1), REML = F, na.action = na.omit, control = lmerControl(optCtrl = list(maxfun = 1e6)), verbose = T)
+  write.csv(as.data.frame(summary(lmer_SET)$coef), paste(figure_dir, "/lmer_SET_summary_", data_year, ".csv", sep = ""))
+  write.csv(as.data.frame(anova(lmer_SET, type = 3)), paste(figure_dir, "/lmer_SET_aov_", data_year, ".csv", sep = ""))
+  # rlmer_SET = rlmer(as.formula(lmer_SET_RT), data = subset(trial_data, set == "SET" & ACC == 1), REML = F, na.action = na.omit, control = lmerControl(optCtrl = list(maxfun = 1e6)), verbose = T)
+  # anova(rlmer_SET, type = 3)
+  lmer_noSET = update(lmer_SET, data = subset(trial_data, set == "noSET" & ACC == 1)) #lmer(as.formula(lmer_SET_RT), data = subset(trial_data, set == "noSET" & ACC == 1), REML = F, na.action = na.omit, control = lmerControl(optCtrl = list(maxfun = 1e6)), verbose = T)
+  write.csv(as.data.frame(summary(lmer_noSET)$coef), paste(figure_dir, "/lmer_noSET_summary_", data_year, ".csv", sep = ""))
+  write.csv(as.data.frame(anova(lmer_noSET, type = 3)), paste(figure_dir, "/lmer_noSET_aov_", data_year, ".csv", sep = ""))
+  
+  ### ACC models
+  glmer_complete = glmer(as.formula(lmer_com_ACC), data = trial_data, family = "binomial", verbose = T, control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e6)))
+  # Anova(glmer_complete, type = "III")
+  write.csv(as.data.frame(summary(glmer_complete)$coef), paste(figure_dir, "/glmer_complete_summary_", data_year, ".csv", sep = ""))
+  write.csv(as.data.frame(anova(glmer_complete, type = 3)), paste(figure_dir, "/glmer_complete_aov_", data_year, ".csv", sep = ""))
+  glmer_SET = glmer(as.formula(lmer_SET_ACC), data = subset(trial_data, set == "SET"), family = "binomial", verbose = T, control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e6)))
+  write.csv(as.data.frame(summary(glmer_SET)$coef), paste(figure_dir, "/glmer_SET_summary_", data_year, ".csv", sep = ""))
+  write.csv(as.data.frame(anova(glmer_SET, type = 3)), paste(figure_dir, "/glmer_SET_aov_", data_year, ".csv", sep = ""))
+  glmer_noSET = update(glmer_SET, data = subset(trial_data, set == "noSET")) #glmer(as.formula(lmer_SET_ACC), data = subset(trial_data, set == "noSET"), family = "binomial", verbose = T, control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e6)))
+  write.csv(as.data.frame(summary(glmer_noSET)$coef), paste(figure_dir, "/glmer_noSET_summary_", data_year, ".csv", sep = ""))
+  write.csv(as.data.frame(anova(glmer_noSET, type = 3)), paste(figure_dir, "/glmer_noSET_aov_", data_year, ".csv", sep = ""))
+  
+  # Plot results (regr_data_full)
+  gg_regr_full = ggplot(regr_data_full, aes(measure, chi2, fill = effect, alpha = p < 0.05)) +
+    geom_bar(stat = "identity", position = position_dodge(width = 0.9)) +
+    labs(x = "", y = "Regression chi^2", fill = "") +
+    facet_grid(~ set)
+  
+  regr_data_select$effect = factor(regr_data_select$effect, levels = levels(regr_data_select$effect)[c(2,5,1,4,3)])
+  gg_regr_select = ggplot(regr_data_select, aes(measure, chi2, fill = effect, alpha = p < 0.05)) +
+    geom_bar(stat = "identity", position = position_dodge(width = 0.9)) +
+    labs(x = "", y = "Regression chi^2", fill = "") +
+    scale_fill_manual(values = c("steelblue4", "steelblue1", "coral4", "coral1", "mediumpurple")) +
+    facet_grid(~ set)
+  
+  
+  ## SETACCnoSETACC & dprime
+  # Prepare data frame to save the regression results
+  regr_data_select2 = expand.grid(
+    effect = c("left_dominant", "across", "L_dom*across", "L_dom*span", "across*span"),
+    measure = c("ACCSETminusnoSET", "RTSETminusnoSET", "dprime"),
+    chi2 = NA,
+    p = NA)
+  
+  regr_data_full2 = expand.grid(
+    effect = c("left_dominant", "across", "mouse_hand", "L_dom*hand", "L_dom*span", "L_dom*across", "across*span", "across*hand"),
+    measure = c("ACCSETminusnoSET", "RTSETminusnoSET", "dprime"),
+    chi2 = NA,
+    p = NA)
 }
-
-# Plot results (regr_data_full)
-gg_regr_full = ggplot(regr_data_full, aes(measure, chi2, fill = effect, alpha = p < 0.05)) +
-  geom_bar(stat = "identity", position = position_dodge(width = 0.9)) +
-  labs(x = "", y = "Regression chi^2", fill = "") +
-  facet_grid(~ set)
-
-regr_data_select$effect = factor(regr_data_select$effect, levels = levels(regr_data_select$effect)[c(2,5,1,4,3)])
-gg_regr_select = ggplot(regr_data_select, aes(measure, chi2, fill = effect, alpha = p < 0.05)) +
-  geom_bar(stat = "identity", position = position_dodge(width = 0.9)) +
-  labs(x = "", y = "Regression chi^2", fill = "") +
-  scale_fill_manual(values = c("steelblue4", "steelblue1", "coral4", "coral1", "mediumpurple")) +
-  facet_grid(~ set)
-
-
-## SETACCnoSETACC & dprime
-# Prepare data frame to save the regression results
-regr_data_select2 = expand.grid(
-  effect = c("left_dominant", "across", "L_dom*across", "L_dom*span", "across*span"),
-  measure = c("ACCSETminusnoSET", "RTSETminusnoSET", "dprime"),
-  chi2 = NA,
-  p = NA)
-
-regr_data_full2 = expand.grid(
-  effect = c("left_dominant", "across", "mouse_hand", "L_dom*hand", "L_dom*span", "L_dom*across", "across*span", "across*hand"),
-  measure = c("ACCSETminusnoSET", "RTSETminusnoSET", "dprime"),
-  chi2 = NA,
-  p = NA)
 
 # Prepare data
 sum_data_wide_reg = merge(subset(sum_data_wide, lateralization != "BI"),# & span != "0span"
@@ -986,7 +914,7 @@ gg_rel_ACC = gg_rel_ACC +
 #   facet_grid(~ set)
 
 gg_rel_ACC_span = gg_rel_ACC + aes(color = span, group = span) +
-  scale_color_brewer(palette = "RdYlBu") +
+  scale_color_manual(values = span_colors) +
   theme(legend.position = "none")
 
 # RT by lateralization
@@ -997,7 +925,7 @@ gg_rel_RT = ggplot(sum_data_cor_l, aes(lateralization, relRT, group = 1)) +
   facet_grid(~ set)
 
 gg_rel_RT_span = gg_rel_RT + aes(color = span, group = span) +
-  scale_color_brewer(palette = "RdYlBu") +
+  scale_color_manual(values = span_colors) +
   theme(legend.position = "none")
 
 # dprime by lateralization
@@ -1008,7 +936,7 @@ gg_rel_dprime = ggplot(sum_data_l2_ACC, aes(lateralization, reldprime, group = 1
   labs(x = "", y = "dprime (LAT - BI)")
 
 gg_rel_dprime_span = gg_rel_dprime + aes(color = span, group = span) +
-  scale_color_brewer(palette = "RdYlBu") +
+  scale_color_manual(values = span_colors) +
   theme(legend.position = "none")
 
 # SET.ACC-noSET.ACC by lateralization
@@ -1018,7 +946,7 @@ gg_rel_SnS_ACC = ggplot(sum_data_l2_ACC, aes(lateralization, relSnS, group = 1))
   labs(x = "", y = "SETACC - noSETACC (LAT - BI)")
 
 gg_rel_SnS_ACC_span = gg_rel_SnS_ACC + aes(color = span, group = span) +
-  scale_color_brewer(palette = "RdYlBu") +
+  scale_color_manual(values = span_colors) +
   theme(legend.position = "none")
 
 # SET.RT-noSET.RT by lateralization
@@ -1028,7 +956,7 @@ gg_rel_SnS_RT = ggplot(sum_data_l2_RT, aes(lateralization, relSnS, group = 1)) +
   labs(x = "", y = "SETRT - noSETRT (LAT - BI)")
 
 gg_rel_SnS_RT_span = gg_rel_SnS_RT + aes(color = span, group = span) +
-  scale_color_brewer(palette = "RdYlBu") +
+  scale_color_manual(values = span_colors) +
   theme(legend.position = "none")
 
 ### Save plots
@@ -1182,6 +1110,29 @@ sum_mouse_data_cor = ddply(subset(trial_data, ACC == 1),
                  RT = median(RT, na.rm = T))
 sum_mouse_data = merge(sum_mouse_data_all, sum_mouse_data_cor)
 
+if (data_year == "2017") {
+  sum_mouse_data_wide = reshape(sum_mouse_data, v.names = c("ACC", "RT"), idvar = c("Subject", "set"), timevar = "mouse_hand", direction = "wide")
+  sum_mouse_data_wide$ACC_diff = with(sum_mouse_data_wide, (1 - ACC.right) - (1 - ACC.left))
+  sum_mouse_data_wide$RT_diff = with(sum_mouse_data_wide, RT.right - RT.left)
+  
+  gg_sum_mouse_ACC2 = ggplot(sum_mouse_data_wide, aes(set, 100 * ACC_diff)) +
+    # geom_point(aes(color = factor(Subject))) +
+    stat_summary(fun.data = mean_se, geom = "bar") +
+    stat_summary(fun.data = mean_se, geom = "pointrange") +
+    labs(x = "", y = "Errors right - Errors left")
+  
+  gg_sum_mouse_RT2 = gg_sum_mouse_ACC2 +
+    aes(set, RT_diff) +
+    labs(x = "", y = "RT right - RT left")
+  
+  if (ggsave_figures) {
+    ggsave(plot = gg_sum_mouse_ACC2, filename = file.path(figure_dir, "10sum_mouse_ACC2.png"), width = one_by_one$width, height = one_by_two$height)
+    ggsave(plot = gg_sum_mouse_RT2, filename = file.path(figure_dir, "10sum_mouse_RT2.png"), width = one_by_one$width, height = one_by_two$height)
+  }
+}
+```
+
+```{r}
 lat_mouse_data_wide = reshape(lat_mouse_data, v.names = "ACC", idvar = c("Subject", "lateralization", "mouse_hand"), timevar = "set", direction = "wide")
 lat_mouse_data_wide$dprime = with(lat_mouse_data_wide, dprime(ACC.SET, (1 - ACC.noSET)))
 lat_mouse_data_wide$ACCSETminusnoSET = with(lat_mouse_data_wide, ACC.SET - ACC.noSET)
@@ -1213,6 +1164,7 @@ sum_mouse_ACC = ggplot(sum_mouse_data, aes(set, 1 - ACC)) +
 sum_mouse_RT = ggplot(sum_mouse_data, aes(set, RT)) +
   stat_summary(fun.data = "mean_se", geom = "bar") +
   stat_summary(fun.data = "mean_se", geom = "pointrange") +
+  coord_cartesian(ylim = c(400, 800)) +
   labs(x = "", y = "RT (msec)") +
   facet_grid(~ mouse_hand)
 
@@ -1223,21 +1175,23 @@ if (ggsave_figures) {
   
 lat_mouse_ACCs = ggplot(subset(lat_span_mouse_data, lateralization %in% c("BI", "LLL", "RRR")), aes(lateralization, (1 - ACC) * 100, color = span)) +
   stat_summary(fun.data = "mean_se", geom = "pointrange", position = position_dodge(width = .2)) +
-  scale_color_brewer(palette = "RdYlBu") +
+  scale_color_manual(values = span_colors) +
   labs(x = "", y = "Errors (%)", color = "Span") +
+  coord_cartesian(ylim = c(0, 40)) +
   theme(legend.position = "none") +
   facet_grid(set ~ mouse_hand)
 
 lat_mouse_SnS = ggplot(subset(lat_span_mouse_data_wide, lateralization %in% c("BI", "LLL", "RRR")), aes(lateralization, ACCSETminusnoSET, color = span)) +#
   stat_summary(fun.data = "mean_se", geom = "pointrange", position = position_dodge(width = .2)) +
-  scale_color_brewer(palette = "RdYlBu") +
+  scale_color_manual(values = span_colors) +
   labs(x = "", y = "bias", color = "Span") +
+  coord_cartesian(ylim = c(-0.3, 0.4)) +
   theme(legend.position = "none") +
   facet_grid( ~ mouse_hand)
 
 lat_mouse_dprime = ggplot(subset(lat_span_mouse_data_wide, lateralization %in% c("BI", "LLL", "RRR")), aes(lateralization, dprime, color = span)) +#
   stat_summary(fun.data = "mean_se", geom = "pointrange", position = position_dodge(width = .2)) +
-  scale_color_brewer(palette = "RdYlBu") +
+  scale_color_manual(values = span_colors) +
   labs(x = "", y = "dprime", color = "Span") +
   coord_cartesian(ylim = c(1.8, 3.4)) +
   theme(legend.position = "none") +
@@ -1245,8 +1199,9 @@ lat_mouse_dprime = ggplot(subset(lat_span_mouse_data_wide, lateralization %in% c
 
 lat_mouse_RTs = ggplot(subset(lat_span_mouse_data_cor, lateralization %in% c("BI", "LLL", "RRR")), aes(lateralization, RT, color = span)) + #
   stat_summary(fun.data = "median.cl.boot", fun.args = list(B = 2000, tr = .2, ci = .68), geom = "pointrange", position = position_dodge(width = .2)) +
-  scale_color_brewer(palette = "RdYlBu") +
+  scale_color_manual(values = span_colors) +
   labs(x = "", y = "RT (msec)", color = "Span") +
+  coord_cartesian(ylim = c(180, 1000)) +
   theme(legend.position = "none") +
   facet_grid(set ~ mouse_hand)
 
@@ -1438,7 +1393,7 @@ for (subj in levels(factor(learning_sum$Subject))) {
 gg_learning_ACC = ggplot(subset(learning_sum, coarse_index < max(learning_sum$coarse_index)), aes(coarse_index, 100 - 100 * rollACC, color = span, group = span)) +
   stat_summary(fun.data = mean_se, position = position_dodge(width = .1)) +
   stat_summary(fun.y = mean, geom = "line") +
-  scale_color_brewer(palette = "RdYlBu") +
+  scale_color_manual(values = span_colors) +
   theme(legend.position = "none") +
   labs(x = paste("Trials / cluster =", bin_width), y = "ACC") +
   facet_grid(set ~ lateralization)
@@ -1446,7 +1401,7 @@ gg_learning_ACC = ggplot(subset(learning_sum, coarse_index < max(learning_sum$co
 gg_learning_RT = ggplot(subset(learning_sum, coarse_index < max(learning_sum$coarse_index)), aes(coarse_index, rollRT, color = span)) +
   stat_summary(fun.data = mean_se, position = position_dodge(width = .1)) +
   stat_summary(fun.y = mean, geom = "line") +
-  scale_color_brewer(palette = "RdYlBu") +
+  scale_color_manual(values = span_colors) +
   theme(legend.position = "none") +
   labs(x = paste("Trials / cluster =", bin_width), y = "RT") +
   facet_grid(set ~ lateralization)
@@ -1484,7 +1439,7 @@ x = 0; y = 1
 gg_pupil_set = ggplot(pupil_data, aes(bin_time, rel_pupil, color = span, fill = span)) +
   stat_summary(fun.y = mean, geom = 'point') +
   stat_summary(fun.data = mean_cl_normal, geom = 'smooth', alpha = 0.2) +
-  scale_color_brewer(palette = "RdYlBu") +
+  scale_color_manual(values = span_colors) +
   scale_fill_brewer(palette = "RdYlBu", guide = FALSE) +
   labs(x = 'Time (s)', y = 'TEPR (mm)', color = ' ', fill = ' ') +
   theme(legend.position = "none") +
@@ -1508,7 +1463,7 @@ gg_pupil_lat = ggplot(pupil_data, aes(bin_time, rel_pupil, color = lateralizatio
 gg_pupil_set_diff = ggplot(SETnoSET_pupil, aes(bin_time, noSET_minus_SET, color = span, fill = span)) +
   stat_summary(fun.y = mean, geom = 'point') +
   stat_summary(fun.data = mean_se, geom = 'smooth', alpha = 0.2) +
-  scale_color_brewer(palette = "RdYlBu") +
+  scale_color_manual(values = span_colors) +
   scale_fill_brewer(palette = "RdYlBu", guide = FALSE) +
   labs(x = 'Time (s)', y = 'noSET TEPR - SET TEPR', color = ' ', fill = ' ') +
   theme(legend.position = "none") +
@@ -1525,4 +1480,6 @@ if (ggsave_figures) {
   ggsave(plot = gg_pupil_lat, filename = file.path(figure_dir, "09gg_pupil_lat.png"), width = pupil_two$width, height = pupil_two$height)
   ggsave(plot = gg_pupil_set_diff, filename = file.path(figure_dir, "10gg_pupil_set_diff.png"), width = pupil_one$width, height = pupil_one$height)
 }
+```
+```{r}
 ```
