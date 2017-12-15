@@ -22,9 +22,8 @@ output:
 #                #
 ##################
 
-# TD: look at ACC & RTs within-subjects: subtract L blocks from R blocks
-
-data_year = "2017"
+# TDs
+data_year = "2016"
 item_presentation_start = c(.1, .3, .5)
 item_presentation_end   = c(.2, .4, .6)
 response_prompt_time    = .7
@@ -34,7 +33,7 @@ analysis_model = "lmer"         # choose between 'aov', 'lme', 'lmer', 'hierarch
 exclude_poor_subjects = T      # Should be T
 exclude_left_handers = T       # Should be T
 exclude_saccade_trials = T     # Should be T
-exclude_fast_trials = T        # Should be T
+exclude_fast_trials = F        # Should be T
 exclude_slow_trials = F        # Should be F because RTs are changing so much over the course of the experiment that it makes no sense to exclude all show trials; doing this, that would penalize early trials much more than late trials
 analyze_saccade_trials = F     # If TRUE, makes a plot of fixation location for each (excluded) saccade trial
 preprocess_data = F            # If TRUE, reads in raw data (.gazedata format), preprocesses it (removes outliers and interpolates pupil data, bins into 50ms pieces, etc.), and creates and saves an all_files data file that contains the raw data from all subjects
@@ -85,30 +84,30 @@ pupil_one  = data.frame(width = 3.5, height = 2.5)
 
 ### Prepare / load data
 if (preprocess_data) {
-  
-  # Read in .gazedata files, filter&interpolate, cut into trials, calculate relative pupil dilation, etc.
-  source("FUNCTIONS/preprocess_gazedata_files.R")
-  filter_stats = preprocess_gazedata_files(inputfile_directory = raw_file_dir,
-                  input_filename_pattern = "lateralizedSET_",
-                  inputfile_format = ".gazedata",
-                  m_trial_duration = trial_duration,
-                  output_filename = "latSET",
-                  outputfile_directory = preprocessing_output_dir,
-                  FUNCTION_dir = FUNCTION_dir,
-                  filter_and_interpolate_max_interp = 12,
-                  smooth_times = 3,
-                  relative_pupil_baseline_window = c(0, 0.2),
-                  data_year = data_year,
-                  mark_saccade_trials = T,
-                  save_saccade_trials = T)
-  write.csv(filter_stats, file.path(preprocessing_data_dir, "filter_stats.csv"), row.names = F)
-  
-  # Create allfiles, which contains all preprocessed subj_files (write .csv and get as object)
-  source("FUNCTIONS/create_allfiles.R")
-  allfiles = create_allfiles(inputfile_directory = preprocessing_output_dir, 
-                             outputfile_directory = allfiles_dir,
-                             data_year = data_year)
-  write.csv(allfiles, file.path(allfiles_dir, paste("preprocessed_allfiles_", data_year, ".csv", sep = "")), row.names = F)
+    
+    # Read in .gazedata files, filter&interpolate, cut into trials, calculate relative pupil dilation, etc.
+    source("FUNCTIONS/preprocess_gazedata_files.R")
+    filter_stats = preprocess_gazedata_files(inputfile_directory = raw_file_dir,
+                    input_filename_pattern = "lateralizedSET_",
+                    inputfile_format = ".gazedata",
+                    m_trial_duration = trial_duration,
+                    output_filename = "latSET",
+                    outputfile_directory = preprocessing_output_dir,
+                    FUNCTION_dir = FUNCTION_dir,
+                    filter_and_interpolate_max_interp = 12,
+                    smooth_times = 3,
+                    relative_pupil_baseline_window = c(0, 0.2),
+                    data_year = data_year,
+                    mark_saccade_trials = T,
+                    save_saccade_trials = T)
+    write.csv(filter_stats, file.path(preprocessing_data_dir, "filter_stats.csv"), row.names = F)
+    
+    # Create allfiles, which contains all preprocessed subj_files (write .csv and get as object)
+    source("FUNCTIONS/create_allfiles.R")
+    allfiles = create_allfiles(inputfile_directory = preprocessing_output_dir, 
+                               outputfile_directory = allfiles_dir,
+                               data_year = data_year)
+    write.csv(allfiles, file.path(allfiles_dir, paste("preprocessed_allfiles_", data_year, ".csv", sep = "")), row.names = F)
   
 } else {
   
@@ -138,11 +137,11 @@ if (data_year == "2016") {
   
   ## Add block column
   allfiles$block = 6
-  allfiles$block[allfiles$TrialId <= 300] = 5
-  allfiles$block[allfiles$TrialId <= 240] = 4
-  allfiles$block[allfiles$TrialId <= 180] = 3
-  allfiles$block[allfiles$TrialId <= 120] = 2
-  allfiles$block[allfiles$TrialId <=  60] = 1
+  allfiles$block[allfiles$TrialId <= 209] = 5
+  allfiles$block[allfiles$TrialId <= 167] = 4
+  allfiles$block[allfiles$TrialId <= 125] = 3
+  allfiles$block[allfiles$TrialId <=  83] = 2
+  allfiles$block[allfiles$TrialId <=  41] = 1
 
   ## Add mouse_hand column
   allfiles$mouse_hand = "left"
@@ -276,7 +275,7 @@ for (subj in unique(allfiles$Subject)) {
 
 ### Remove excluded subjects
 if (exclude_left_handers) {
-  allfiles = subset(allfiles, !Subject %in% left_handers)
+  allfiles = subset(allfiles, !Subject %in% c(left_handers, 523))  # 523 was "born left-handed but parents trained him to be right-handed"
 }
 if (exclude_poor_subjects) {
   allfiles = allfiles[!allfiles$Subject %in% chance_performers,]
@@ -300,12 +299,11 @@ subject_trials = ggplot(filter_stats, aes(Subject, (saccade_trials + fast_trials
   labs(y = "% excluded trials")
 
 if (ggsave_figures) {
-  plot(subject_trials)
-  ggsave(plot = subject_trials,  filename = file.path(figure_dir, "01subject_trials.png"),  width = 10, height = 2.5)
+  ggsave(plot = subject_trials, filename = file.path(figure_dir, "01subject_trials.png"), width = 10, height = 2.5)
 }
 
 ### Summarize data again (AFTER excluding participants & trials)
-trial_data = ddply(allfiles, .(Subject, TrialId, set, span, lateralization, mouse_hand, program_version), summarize,
+trial_data = ddply(allfiles, .(Subject, block, TrialId, set, span, lateralization, mouse_hand, program_version), summarize,
                    ACC = mean(ACC, na.rm = T),
                    RT  = median(RT, na.rm = T))
 
@@ -377,13 +375,6 @@ SETRTnoSETRT = ggplot(span_data_wide, aes(span, SETRTnoSETRT)) +
   labs(x = "", y = "SET RT - noSET RT (msec)")
 
 if (ggsave_figures) {
-  # Print to pdf (when knitting)
-  plot(ACCs)
-  plot(RTs)
-  plot(SETACCnoSETACC)
-  plot(SETRTnoSETRT)
-  plot(dprime)
-  # Safe into folder
   ggsave(plot = ACCs, filename = file.path(figure_dir, "02ACCs.png"), width = one_by_two$width, height = one_by_two$height)
   ggsave(plot = RTs,  filename = file.path(figure_dir, "02RTs.png"),  width = one_by_two$width, height = one_by_two$height)
   ggsave(plot = SETACCnoSETACC, filename = file.path(figure_dir, "03SETACCnoSETACC.png"), width = one_by_one$width, height = one_by_two$height)
@@ -392,14 +383,63 @@ if (ggsave_figures) {
 }
 ```
 
+```{r Performance over blocks}
+if (data_year == "2017") {
+  trial_data$block_trial = NA
+  trial_data = trial_data[order(trial_data$Subject, trial_data$set, trial_data$span, trial_data$TrialId),]  # , trial_data$lateralization
+  block_trial = 0
+  block = 1
+  for (row in 1:nrow(trial_data)) {
+    if (trial_data$block[row] == block) {
+      block_trial = block_trial + 1
+    } else {
+      block_trial = 1
+    }
+    trial_data$block_trial[row] = block_trial
+    block = trial_data$block[row]
+  }
+  
+  gg_block_ACC = ggplot(trial_data, aes(block_trial, (1 - ACC) * 100, color = mouse_hand, group = mouse_hand)) +
+    stat_summary(fun.data = mean_se, geom = "pointrange") +
+    stat_summary(fun.data = mean_se, geom = "line") +
+    labs(x = "Trial", y = "Errors (%)", color = "Mouse hand") +
+    facet_grid(paste("Block", block) ~ set)
+  
+  gg_block_RT = gg_block_ACC
+  gg_block_RT$data = subset(trial_data, ACC == 1)
+  gg_block_RT = gg_block_RT +
+    aes(y = RT) +
+    labs(y = "RT (msec)")
+  
+  gg_block_ACC2 = ggplot(subset(trial_data, block != 1), aes(2 * round(block_trial/2), (1 - ACC) * 100, color = mouse_hand, group = mouse_hand)) +
+    stat_summary(fun.data = mean_se, geom = "pointrange") +
+    stat_summary(fun.data = mean_se, geom = "line") +
+    labs(x = "Trial", y = "Errors (%)", color = "Mouse hand") +
+    facet_grid( ~ set)
+
+  gg_block_RT2 = gg_block_ACC2
+  gg_block_RT2$data = subset(gg_block_ACC2$data, ACC == 1)
+  gg_block_RT2 = gg_block_RT2 +
+    aes(y = RT) +
+    labs(y = "RT (msec)")
+  
+  if (ggsave_figures) {
+    ggsave(file.path(figure_dir, "03gg_block_ACC.png"), gg_block_ACC)
+    ggsave(file.path(figure_dir, "03gg_block_RT.png"), gg_block_RT)
+    ggsave(file.path(figure_dir, "03gg_block_ACC2.png"), gg_block_ACC2, width = 6, height = 3)
+    ggsave(file.path(figure_dir, "03gg_block_RT2.png"), gg_block_RT2, width = 6, height = 3)
+  }
+}
+```
+
 ```{r ACC, RT by lateralization - raw, echo = F, results = F, warning = F, message = F, fig.cap = "Effect of lateralization"}
 ### Prepare data
 source("FUNCTIONS/dprime.R")
-lat_data = ddply(subset(trial_data, span != "0span"),
+lat_data = ddply(subset(trial_data, !span %in% c("0span", "2span")),
                  .(Subject, set, lateralization), summarize,
                  ACC = mean(ACC, na.rm = T))
 
-lat_data_cor = ddply(subset(trial_data, span != "0span" & ACC == 1),
+lat_data_cor = ddply(subset(trial_data, !span %in% c("0span", "2span") & ACC == 1),
                       .(Subject, set, lateralization), summarize,
                       RT = median(RT, na.rm = T))
 
@@ -450,20 +490,24 @@ lat_SETRTnoSETRT = base_plot +
   aes(lateralization, RTSETminusnoSET) +
   coord_cartesian(ylim = c(-50, 350)) +
   labs(x = "", y = "SET RT - noSET RT")
+
+gg_ACC_lat_mouse = ggplot(trial_data, aes(lateralization, (1 - ACC) * 100, color = mouse_hand)) +
+  stat_summary(fun.data = mean_se, geom = "pointrange") +
+  labs(x = "", y = "Errors (%)", color = "Mouse hand") +
+  facet_grid(~ set)
+
+gg_RT_lat_mouse = gg_ACC_lat_mouse +
+  aes(y = RT) +
+  labs(y = "RT (msec)")
   
 if (ggsave_figures) {
-  # Print to pdf (when knitting)
-  plot(lat_ACCs)
-  plot(lat_RTs)
-  plot(lat_SETACCnoSETACC)
-  plot(lat_dprime)
-  plot(lat_SETRTnoSETRT)
-  # Safe into folder
   ggsave(plot = lat_ACCs, filename = file.path(figure_dir, "05lat_ACCs.png"), width = one_by_two$width + 1, height = one_by_two$height)
   ggsave(plot = lat_RTs,  filename = file.path(figure_dir, "05lat_RTs.png"),  width = one_by_two$width + 1, height = one_by_two$height)
   ggsave(plot = lat_SETACCnoSETACC, filename = file.path(figure_dir, "06lat_SETACCnoSETACC.png"), width = one_by_one$width + 1, height = one_by_one$height)
   ggsave(plot = lat_SETRTnoSETRT,   filename = file.path(figure_dir, "06lat_SETRTnoSETRT.png"),   width = one_by_one$width + 1, height = one_by_one$height)
   ggsave(plot = lat_dprime, filename = file.path(figure_dir, "06lat_dprime.png"), width = one_by_one$width + 1, height = one_by_one$height)
+  ggsave(plot = gg_ACC_lat_mouse, filename = file.path(figure_dir, "05gg_ACC_lat_mouse.png"), width = one_by_two$width + 1, height = one_by_two$height)
+  ggsave(plot = gg_RT_lat_mouse, filename = file.path(figure_dir, "05gg_RT_lat_mouse.png"), width = one_by_two$width + 1, height = one_by_two$height)
 }
 ```
 
@@ -532,14 +576,6 @@ lat_SETRTnoSETRT_big = RT_base_plot +
   labs(x = "", y = "SET RT - noSET RT")
 
 if (ggsave_figures) {
-  # Print to pdf (when knitting)
-  plot(lat_ACCs_big)
-  plot(lat_ACCs_big_subj)
-  plot(lat_RTs_big)
-  plot(lat_SETACCnoSETACC_big)
-  plot(lat_dprime_big)
-  plot(lat_SETRTnoSETRT_big)
-  # Safe into folder
   ggsave(plot = lat_ACCs_big_subj, filename = file.path(figure_dir, "07lat_ACCs_big_by_subj.png"), width = one_by_two$width + 1, height = 49)
   ggsave(plot = lat_ACCs_big, filename = file.path(figure_dir, "07lat_ACCs_big.png"), width = one_by_two$width + 1, height = one_by_two$height)
   ggsave(plot = lat_RTs_big,  filename = file.path(figure_dir, "07lat_RTs_big.png"),  width = one_by_two$width + 1, height = one_by_two$height)
@@ -664,28 +700,28 @@ if (run_regression_models) {
   
   ### RT models
   lmer_complete = lmer(as.formula(lmer_com_RT), data = subset(trial_data, ACC == 1), REML = F, na.action = na.omit, control = lmerControl(optCtrl = list(maxfun = 1e6)), verbose = T)
-  write.csv(as.data.frame(summary(lmer_complete)$coef), paste(figure_dir, "/lmer_complete_summary_", data_year, ".csv", sep = ""))
-  write.csv(as.data.frame(anova(lmer_complete, type = 3)), paste(figure_dir, "/lmer_complete_aov_", data_year, ".csv", sep = ""))
+  write.csv(as.data.frame(summary(lmer_complete)$coef), paste(figure_dir, "/RT_lmer_complete_summary.csv", sep = ""))
+  write.csv(as.data.frame(anova(lmer_complete, type = 3)), paste(figure_dir, "/RT_lmer_complete_aov.csv", sep = ""))
   lmer_SET = lmer(as.formula(lmer_SET_RT), data = subset(trial_data, set == "SET" & ACC == 1), REML = F, na.action = na.omit, control = lmerControl(optCtrl = list(maxfun = 1e6)), verbose = T)
-  write.csv(as.data.frame(summary(lmer_SET)$coef), paste(figure_dir, "/lmer_SET_summary_", data_year, ".csv", sep = ""))
-  write.csv(as.data.frame(anova(lmer_SET, type = 3)), paste(figure_dir, "/lmer_SET_aov_", data_year, ".csv", sep = ""))
+  write.csv(as.data.frame(summary(lmer_SET)$coef), paste(figure_dir, "/RT_lmer_SET_summary.csv", sep = ""))
+  write.csv(as.data.frame(anova(lmer_SET, type = 3)), paste(figure_dir, "/RT_lmer_SET_aov.csv", sep = ""))
   # rlmer_SET = rlmer(as.formula(lmer_SET_RT), data = subset(trial_data, set == "SET" & ACC == 1), REML = F, na.action = na.omit, control = lmerControl(optCtrl = list(maxfun = 1e6)), verbose = T)
   # anova(rlmer_SET, type = 3)
   lmer_noSET = update(lmer_SET, data = subset(trial_data, set == "noSET" & ACC == 1)) #lmer(as.formula(lmer_SET_RT), data = subset(trial_data, set == "noSET" & ACC == 1), REML = F, na.action = na.omit, control = lmerControl(optCtrl = list(maxfun = 1e6)), verbose = T)
-  write.csv(as.data.frame(summary(lmer_noSET)$coef), paste(figure_dir, "/lmer_noSET_summary_", data_year, ".csv", sep = ""))
-  write.csv(as.data.frame(anova(lmer_noSET, type = 3)), paste(figure_dir, "/lmer_noSET_aov_", data_year, ".csv", sep = ""))
+  write.csv(as.data.frame(summary(lmer_noSET)$coef), paste(figure_dir, "/RT_lmer_noSET_summary.csv", sep = ""))
+  write.csv(as.data.frame(anova(lmer_noSET, type = 3)), paste(figure_dir, "/RT_lmer_noSET_aov.csv", sep = ""))
   
   ### ACC models
   glmer_complete = glmer(as.formula(lmer_com_ACC), data = trial_data, family = "binomial", verbose = T, control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e6)))
   # Anova(glmer_complete, type = "III")
-  write.csv(as.data.frame(summary(glmer_complete)$coef), paste(figure_dir, "/glmer_complete_summary_", data_year, ".csv", sep = ""))
-  write.csv(as.data.frame(anova(glmer_complete, type = 3)), paste(figure_dir, "/glmer_complete_aov_", data_year, ".csv", sep = ""))
+  write.csv(as.data.frame(summary(glmer_complete)$coef), paste(figure_dir, "/ACC_glmer_complete_summary.csv", sep = ""))
+  write.csv(as.data.frame(anova(glmer_complete, type = 3)), paste(figure_dir, "/ACC_glmer_complete_aov.csv", sep = ""))
   glmer_SET = glmer(as.formula(lmer_SET_ACC), data = subset(trial_data, set == "SET"), family = "binomial", verbose = T, control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e6)))
-  write.csv(as.data.frame(summary(glmer_SET)$coef), paste(figure_dir, "/glmer_SET_summary_", data_year, ".csv", sep = ""))
-  write.csv(as.data.frame(anova(glmer_SET, type = 3)), paste(figure_dir, "/glmer_SET_aov_", data_year, ".csv", sep = ""))
+  write.csv(as.data.frame(summary(glmer_SET)$coef), paste(figure_dir, "/ACC_glmer_SET_summary.csv", sep = ""))
+  write.csv(as.data.frame(anova(glmer_SET, type = 3)), paste(figure_dir, "/ACC_glmer_SET_aov.csv", sep = ""))
   glmer_noSET = update(glmer_SET, data = subset(trial_data, set == "noSET")) #glmer(as.formula(lmer_SET_ACC), data = subset(trial_data, set == "noSET"), family = "binomial", verbose = T, control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e6)))
-  write.csv(as.data.frame(summary(glmer_noSET)$coef), paste(figure_dir, "/glmer_noSET_summary_", data_year, ".csv", sep = ""))
-  write.csv(as.data.frame(anova(glmer_noSET, type = 3)), paste(figure_dir, "/glmer_noSET_aov_", data_year, ".csv", sep = ""))
+  write.csv(as.data.frame(summary(glmer_noSET)$coef), paste(figure_dir, "/ACC_glmer_noSET_summary.csv", sep = ""))
+  write.csv(as.data.frame(anova(glmer_noSET, type = 3)), paste(figure_dir, "/ACC_glmer_noSET_aov.csv", sep = ""))
   
   # Plot results (regr_data_full)
   gg_regr_full = ggplot(regr_data_full, aes(measure, chi2, fill = effect, alpha = p < 0.05)) +
@@ -1095,17 +1131,17 @@ gg_regr_select = ggplot(regr_data_select, aes(measure, chi2, fill = effect, alph
 ```{r ACCs & RTs depending on mouse hand, echo = F, warning = F, message = F}
 ## Mouse & lateralization
 ### Prepare data
-lat_mouse_data = ddply(subset(trial_data),#, span != "0span"
+lat_mouse_data = ddply(subset(trial_data, !span %in% c("0span", "2span")),#, span != "0span"
                  .(Subject, set, lateralization, mouse_hand), summarize,
                  ACC = mean(ACC, na.rm = T))
-lat_mouse_data_cor = ddply(subset(trial_data, ACC == 1),#span != "0span" & 
+lat_mouse_data_cor = ddply(subset(trial_data, ACC == 1 & !span %in% c("0span", "2span")),#span != "0span" & 
                       .(Subject, set, lateralization, mouse_hand), summarize,
                       RT = median(RT, na.rm = T))
 
-sum_mouse_data_all = ddply(trial_data,
+sum_mouse_data_all = ddply(subset(trial_data, !span %in% c("0span", "2span")),
                  .(Subject, set, mouse_hand), summarize,
                  ACC = mean(ACC, na.rm = T))
-sum_mouse_data_cor = ddply(subset(trial_data, ACC == 1),
+sum_mouse_data_cor = ddply(subset(trial_data, ACC == 1 & !span %in% c("0span", "2span")),
                  .(Subject, set, mouse_hand), summarize,
                  RT = median(RT, na.rm = T))
 sum_mouse_data = merge(sum_mouse_data_all, sum_mouse_data_cor)
