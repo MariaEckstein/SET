@@ -17,7 +17,7 @@ output:
 
 ### Set directories
 #setwd("C:/Users/maria/documents/MEGAsync/Berkeley/R scripts/sequentialset")
-file_dir = "C:/Users/maria/documents/MEGAsync/Berkeley/R scripts/sequentialset/subj_files/databoth/raw_data"
+file_dir = "C:/Users/maria/MEGAsync/Berkeley/R scripts/sequentialset/subj_files/databoth/raw_data"
 figure_dir = "C:/Users/Maria/Dropbox/Maria_Ariel_Silvia_SETpaper/Figures"
 # file_dir = "C:/Users/maria/MEGAsync/Berkeley/R scripts/sequentialset/subj_files_nb"
 
@@ -26,7 +26,7 @@ library("plyr"); library("zoo"); library("gridExtra"); library("reshape"); libra
 
 preprocess_data = F                              # If TRUE, reads in raw data (.csv format), preprocesses it (shifting fixation to previous trial [2013 data], removing outliers and interpolating pupil data), and creates an all_files data file that contains the raw data from all subjects
 run_regression_models = F                        # If TRUE, will calculate all the hierrachical regressio models, which takes FOREVER
-ggsave_figures = T
+ggsave_figures = F
 nb = T                                           # nb: new baseline
 data_year = "both"                                     # Which data set? 2013 or 2015 or "both" or 2016?
 
@@ -76,6 +76,13 @@ if (preprocess_data) {
   
   ### Find subject data files and create folder to put the preprocessed ones
   filenames = list.files(file_dir, pattern = "*.csv")
+  
+  test_file = read.csv(file = file.path(file_dir, filenames[1]), header = T, na.strings = c("", "NA", "-1"))
+  test_file = ddply(subset(test_file, TrainorExp != "Train"), .(Subject, TrialId, ACC, RT, Category, SETornoSET), summarize, RT2 = mean(RT))
+  colnames(test_file)[colnames(test_file) == "RT"] = 'rt'
+  colnames(test_file)[colnames(test_file) == "RT"] = 'stim'
+  colnames(test_file)[colnames(test_file) == "ACC"] = 'respone'
+  write.csv(test_file, paste0(file_dir, "/subset/test_file.csv"), row.names = F)
   
   ### Set up the loop over all files
   for (filename in filenames) {
@@ -465,7 +472,7 @@ RT_plot = ggplot(subjwise_perf_set, aes(span, RT, group = set, color = set)) +
   stat_summary(fun.data = mean_cl_normal, fun.args = list(mult = 1), geom = "pointrange") +
   # stat_summary(fun.data = mean.cl.boot, fun.args = list(B = 2000, tr = .2, ci = .68), geom = "pointrange") +
   scale_color_manual(values = c("dark orange", "dark grey")) +
-  labs(x = "", y = "RT (msec)") +
+  labs(x = "", y = "RT (ms)") +
   scale_x_discrete(labels = c("0sp", "1sp", "2sp", "3sp")) +
   theme(legend.position = "none") +
   facet_wrap(~ set)
@@ -750,6 +757,7 @@ gg_IEPD = ggplot(subjwise_perf_oddball_long, aes(oddball, value, fill = RVE)) +
   stat_summary(fun.data = mean_se) +
   theme_bw() +
   scale_fill_grey() +
+  scale_x_discrete(labels = c("noS3", "SET", "noS4")) +
   labs(x = "", y = "IEPD (mm)") +
   theme(legend.position = "none") +
   facet_grid(bigspan ~ factor(item, labels = c("Item 2", "Item 3", "Item 4")))
@@ -760,25 +768,43 @@ if (ggsave_figures) {
 }
 ```
 ```{r IEPD paper plot t-tests}
+subjwise_perf_oddball
 # t-tests
-# # IEPD rule-violating vs rule-congruent item (= VOE)
-# (t_span0_item3_nS3 = t.test(subset(odd_idx_dat12_wide, item == "Item3" & span == "0span")$nS3_minus_SET))
-# (t_span0_item4_nS4 = t.test(subset(odd_idx_dat12_wide, item == "Item4" & span == "0span")$nS4_minus_SET))
-# (t_span123_item3_nS3 = t.test(subset(odd_idx_dat12_wide, item == "Item3" & span != "0span")$nS3_minus_SET))
-# (t_span123_item4_nS4 = t.test(subset(odd_idx_dat12_wide, item == "Item4" & span != "0span")$nS4_minus_SET))
-# # VOE item3 vs item4
-# (t_span0_item3vs4_nS3 = t.test(subset(odd_idx_dat13, span == "0span")$IEPD_diff))
-# (t_span0_item3vs4_nS3 = t.test(subset(odd_idx_dat13, span == "0span")$VOE_diff))
-# (t_span123_item3vs4_nS3 = t.test(subset(odd_idx_dat13, span != "0span")$IEPD_diff))
-# (t_span123_item3vs4_nS3 = t.test(subset(odd_idx_dat13, span != "0span")$VOE_diff))
-# # IEPD item presented AFTER rule-violating item
-# (t_span123_item4_nS3 = t.test(subset(odd_idx_dat12_wide, item == "Item4" & span != "0span")$nS3_minus_SET))
-# (t_span0_item4_nS3 = t.test(subset(odd_idx_dat12_wide, item == "Item4" & span == "0span")$nS3_minus_SET))
-# t.test(subset(odd_idx_dat12, ACC == "correct" & bigspan == "0span" & oddball == "noSET-3" & item == "Item4")$pupil)
-# t.test(subset(odd_idx_dat12, ACC == "correct" & bigspan == "123span" & oddball == "noSET-3" & item == "Item4")$pupil)
-# # Difference betwen 0-span and higher spans
-# (t_span3_nS3_span0vs123 = t.test(pupil ~ bigspan, data = subset(odd_idx_dat12, ACC == "correct" & oddball == "noSET-3" & item == "Item3")))
-# (t_span4_nS4_span0vs123 = t.test(pupil ~ bigspan, data = subset(odd_idx_dat12, ACC == "correct" & oddball == "noSET-4" & item == "Item4")))
+## IEPD rule-violating vs rule-congruent item (= VOE)
+t.test(subset(subjwise_perf_oddball, oddball == "SET" & span == "0span")$IEPD3 -
+       subset(subjwise_perf_oddball, oddball == "noSET-3" & span == "0span")$IEPD3)  # item3 0-span, SET vs noSET-3
+t.test(subset(subjwise_perf_oddball, oddball == "SET" & span != "0span")$IEPD3 -
+       subset(subjwise_perf_oddball, oddball == "noSET-3" & span != "0span")$IEPD3)  # item3 123-span, SET vs noSET-3
+t.test(subset(subjwise_perf_oddball, oddball == "SET" & span == "0span")$IEPD4 -
+       subset(subjwise_perf_oddball, oddball == "noSET-4" & span == "0span")$IEPD4)  # item4 0-span, SET vs noSET-4
+t.test(subset(subjwise_perf_oddball, oddball == "SET" & span != "0span")$IEPD4 -
+       subset(subjwise_perf_oddball, oddball == "noSET-4" & span != "0span")$IEPD4)  # item4 123-span, SET vs noSET-4
+
+## Decreased IEPD after rule-violating item
+t.test(subset(subjwise_perf_oddball, oddball == "SET" & span == "0span")$IEPD4 -
+       subset(subjwise_perf_oddball, oddball == "noSET-3" & span == "0span")$IEPD4)  # 0-span item4, SET vs noSET-3
+t.test(subset(subjwise_perf_oddball, oddball == "SET" & span != "0span")$IEPD4 -
+       subset(subjwise_perf_oddball, oddball == "noSET-3" & span != "0span")$IEPD4)  # 123-span item4, SET vs noSET-3
+
+## Difference betwen 0-span and higher spans
+t.test(subset(subjwise_perf_oddball, oddball == "SET" & span == "0span")$IEPD3,
+       subset(subjwise_perf_oddball, oddball == "SET" & span != "0span")$IEPD3)  # item3 SET
+t.test(subset(subjwise_perf_oddball, oddball == "noSET-4" & span == "0span")$IEPD3,
+       subset(subjwise_perf_oddball, oddball == "noSET-4" & span != "0span")$IEPD3)  # item3 noSET-4
+t.test(subset(subjwise_perf_oddball, oddball == "noSET-3" & span == "0span")$IEPD3,
+       subset(subjwise_perf_oddball, oddball == "noSET-3" & span != "0span")$IEPD3)  # item3 noSET-3
+t.test(subset(subjwise_perf_oddball, oddball == "noSET-4" & span == "0span")$IEPD4,
+       subset(subjwise_perf_oddball, oddball == "noSET-4" & span != "0span")$IEPD4)  # item4 noSET-4
+
+## VOE item3 vs item4
+t.test(subset(subjwise_perf_oddball, oddball == "noSET-3" & span == "0span")$IEPD3 -
+       subset(subjwise_perf_oddball, oddball == "noSET-4" & span == "0span")$IEPD4)  # 0-span item3 vs item4
+t.test(subset(subjwise_perf_oddball, oddball == "noSET-3" & span != "0span")$IEPD3 -
+       subset(subjwise_perf_oddball, oddball == "noSET-4" & span != "0span")$IEPD4)  # 123-span item3 vs item4
+
+## IEPD item presented AFTER rule-violating item
+t.test(subset(subjwise_perf_oddball, oddball == "noSET-3" & span == "0span")$IEPD4)  # 0-span noSET-3 item4
+t.test(subset(subjwise_perf_oddball, oddball == "noSET-3" & span != "0span")$IEPD4)  # 123-span noSET-3 item4
 ```
 
 ## Part 2: Flat vs hierarchical strategies
@@ -905,7 +931,7 @@ gg_ppg_ACC_cont = ggplot(subjwise_perf_set_g, aes(ppg_cont, 100 * (1 - ACC), col
   labs(x = "Continuous measure of pupil pattern", y = "Error rate (%)", color = "") +
   facet_grid(~ set) +
   theme_bw()
-gg_ppg_RT_cont = gg_ppg_ACC_cont + aes(y = RT) + labs(y = "Respone time (msec)")
+gg_ppg_RT_cont = gg_ppg_ACC_cont + aes(y = RT) + labs(y = "Respone time (ms)")
 gg_ppg_IEPD_cont = gg_ppg_ACC_cont + aes(y = IEPD) + labs(y = "IEPD (mm)")
 gg_ppg_dprime_cont = gg_ppg_ACC_cont + aes(y = dprime) + labs(y = "dprime")
 gg_ppg_qu_cont = ggplot(subset(qu_g_long, !is.na(ppg)), aes(ppg_cont, value, color = year)) +
@@ -943,13 +969,16 @@ gg_ppg_qu_cont = ggplot(subset(qu_g_long, !is.na(ppg)), aes(ppg_cont, value, col
 # gg_incr234_odd_ACC1_span123_g2$data = subset(odd_idx_dat12_g, ACC == "correct" & bigspan == "123span" & fill == "red")
 
 ## ppg groups against ACC, RT, VOE, d-prime, IEPD
-gg_ppg_ACC = ggplot(subjwise_perf_set_g, aes(span, 100 * (1 - ACC), color = ppg)) +
+gg_ppg_ACC = ggplot(subset(subjwise_perf_set_g, !is.na(ppg)), aes(span, 100 * (1 - ACC), color = ppg, group = ppg)) +
+  stat_summary(fun.data = mean_se, geom = "line") +
   stat_summary(fun.data = mean_se, geom = "pointrange") +
   scale_color_manual(values = bw_colors) +
+  scale_x_discrete(labels = paste0(0:3, "sp")) +
   labs(x = "", y = "Error rate (%)", color = "") +
   facet_grid(~ set) +
-  theme_bw()
-gg_ppg_RT = gg_ppg_ACC + aes(y = RT) + labs(y = "Respone time (msec)")
+  theme_bw() +
+  theme(legend.position = "none")
+gg_ppg_RT = gg_ppg_ACC + aes(y = RT) + labs(y = "RT (ms)")
 gg_ppg_IEPD = gg_ppg_ACC + aes(y = IEPD) + labs(y = "IEPD (mm)")
 gg_ppg_dprime = gg_ppg_ACC + aes(y = dprime) + labs(y = "dprime")
 gg_ppg_qu = gg_ppg_qu_cont + aes(x = ppg) + stat_summary(fun.data = mean_se, geom = "pointrange")
@@ -969,13 +998,13 @@ if (ggsave_figures) {
   plot(gg_ppg_qu_cont)
   ggsave(plot = gg_ppg_qu_cont, paste(figure_dir, "/Figure8_qu_cont.png", sep = ""), width = 12, height = 3.5)
   plot(gg_ppg_ACC)
-  ggsave(plot = gg_ppg_ACC, paste(figure_dir, "/Figure8_ACC.png", sep = ""), width = 6, height = 3.5)
+  ggsave(plot = gg_ppg_ACC, paste(figure_dir, "/Figure8_ACC.png", sep = ""), width = 3, height = 2)
   plot(gg_ppg_RT)
-  ggsave(plot = gg_ppg_RT, paste(figure_dir, "/Figure8_RT.png", sep = ""), width = 6, height = 3.5)
+  ggsave(plot = gg_ppg_RT, paste(figure_dir, "/Figure8_RT.png", sep = ""), width = 3, height = 2)
   plot(gg_ppg_IEPD)
-  ggsave(plot = gg_ppg_IEPD, paste(figure_dir, "/Figure8_IEPD.png", sep = ""), width = 6, height = 3.5)
+  ggsave(plot = gg_ppg_IEPD, paste(figure_dir, "/Figure8_IEPD.png", sep = ""), width = 3, height = 2)
   plot(gg_ppg_dprime)
-  ggsave(plot = gg_ppg_dprime, paste(figure_dir, "/Figure8_dprime.png", sep = ""), width = 6, height = 3.5)
+  ggsave(plot = gg_ppg_dprime, paste(figure_dir, "/Figure8_dprime.png", sep = ""), width = 3, height = 2)
   plot(gg_ppg_qu)
   ggsave(plot = gg_ppg_qu, paste(figure_dir, "/Figure8_qu.png", sep = ""), width = 12, height = 3.5)
   # plot(gg_incr234_odd_ACC1_span0_g)
